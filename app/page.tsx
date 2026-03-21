@@ -260,7 +260,10 @@ export default function Home() {
                         <tr key={i} className="text-zinc-300 hover:bg-white/5 transition-colors">
                           <td className="p-4 leading-tight">{item.description}</td>
                           <td className="p-4 text-center text-zinc-500">{item.qty}</td>
-                          <td className="p-4 text-right text-blue-400 font-bold">${item.price}</td>
+                          {/* If price is negative, show it in a different color */}
+                          <td className={`p-4 text-right font-bold ${item.price < 0 ? 'text-green-400' : 'text-blue-400'}`}>
+                            {item.price < 0 ? `- $${Math.abs(item.price)}` : `$${item.price}`}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

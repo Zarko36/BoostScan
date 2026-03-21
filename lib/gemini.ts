@@ -34,6 +34,7 @@ export async function scanInvoice(base64Image: string, fileType: string) {
   const prompt = `
     Analyze this document (Invoice, Bill, or Receipt) and return a STRICT JSON object.
     If a field is not applicable or not found, return null.
+    2. If there is a DISCOUNT, COUPON, or ADJUSTMENT that lowers the total, include it as a line item with a NEGATIVE price (e.g., -5.00).
 
     Fields to extract:
     - vendor: (e.g., "Southern California Edison", "Netflix", "ECCPP")
