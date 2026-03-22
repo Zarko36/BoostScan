@@ -8,7 +8,6 @@ import {
   Loader2
 } from "lucide-react";
 
-// 1. Define specific interfaces for your data structures
 interface RecordItem {
   description: string;
   qty: number | string;
@@ -28,34 +27,48 @@ interface Invoice {
 }
 
 export default function VaultPage() {
-  // 2. State hooks
   const [history, setHistory] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState("All");
 
-  // 3. Define fetchHistory using useCallback so it can be called safely from anywhere
   const fetchHistory = useCallback(async () => {
-    setLoading(true);
-    const { data } = await supabase
+    // We remove the synchronous setLoading(true) from here 
+    // to prevent the cascading render error during mount.
+    const { data, error } = await supabase
       .from('invoices')
       .select('*')
       .order('created_at', { ascending: false });
     
+    if (error) {
+      console.error("Vault_Fetch_Error:", error);
+    }
+
     if (data) setHistory(data as Invoice[]);
     setLoading(false);
   }, []);
 
-  // 4. Run the effect on mount
-  // 4. Run the effect on mount
-    useEffect(() => {
-        // Defining an IIFE inside the effect satisfies strict linters 
-        // because it treats the fetch as a self-contained side-effect.
-        (async () => {
-        await fetchHistory();
-        })();
-    }, [fetchHistory]);
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadData = async () => {
+      // Call the fetch
+      await fetchHistory();
+      
+      // ONLY update loading state if the user is still on this page
+      if (isMounted) {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+
+    return () => {
+      // When the user leaves the page, set this to false
+      isMounted = false;
+    };
+  }, [fetchHistory]);
 
   const handleOpenDetails = async (invoice: Invoice) => {
     setSelectedInvoice(invoice);
@@ -69,10 +82,11 @@ export default function VaultPage() {
 
   const handleDelete = async (invoice: Invoice) => {
     if (!confirm("Confirm Record Deletion?")) return;
+    setLoading(true); // Re-trigger loading state for deletion feedback
     if (invoice.file_path) await supabase.storage.from('invoices').remove([invoice.file_path]);
     await supabase.from('invoices').delete().eq('id', invoice.id);
     setSelectedInvoice(null);
-    fetchHistory();
+    await fetchHistory();
   };
 
   const categories = [
@@ -100,7 +114,6 @@ export default function VaultPage() {
       </div>
 
       <div className="flex flex-col lg:flex-row gap-12">
-        {/* --- LEFT SIDE-RAIL --- */}
         <aside className="w-full lg:w-64 shrink-0">
           <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest px-4 mb-4">
             Database_Sectors [{loading ? "..." : filteredHistory.length}]
@@ -124,48 +137,49 @@ export default function VaultPage() {
         </aside>
 
         {/* --- MAIN CONTENT AREA --- */}
-        <main className="flex-1 outline-none">
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-48 border border-zinc-800/50 bg-zinc-900/20 rounded-3xl backdrop-blur-sm shadow-2xl">
-              <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-4" />
-              <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 animate-pulse">
-                Synchronizing_Vault_Data...
-              </p>
-            </div>
-          ) : filteredHistory.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-in fade-in duration-700">
-              {filteredHistory.map((inv) => (
-                <div 
-                  key={inv.id} 
-                  onClick={() => handleOpenDetails(inv)}
-                  className="p-6 bg-zinc-900/40 border border-zinc-800 rounded-2xl hover:border-blue-500/30 transition-all cursor-pointer group shadow-xl backdrop-blur-sm"
-                >
-                  <div className="flex justify-between items-start mb-6">
-                    <div>
-                      <h4 className="text-white font-bold group-hover:text-blue-400 transition-colors truncate max-w-[180px]">{inv.vendor_name}</h4>
-                      <p className="text-[9px] text-zinc-500 font-mono uppercase tracking-widest mt-1">
-                        {inv.category} {"//"} {inv.invoice_date}
-                      </p>
-                    </div>
-                    <FileText className="w-5 h-5 text-zinc-700 group-hover:text-blue-500 transition-colors" />
-                  </div>
-                  <div className="flex justify-between items-end border-t border-zinc-800/50 pt-4">
-                    <p className="text-blue-400 font-mono font-black text-xl">${inv.total_amount}</p>
-                    <CheckCircle className="w-4 h-4 text-green-500/20" />
-                  </div>
+        <main className="flex-1 outline-none focus:outline-none">
+            {loading ? (
+                /* Added min-h to match common vault height and prevent layout snapping */
+                <div className="flex flex-col items-center justify-center min-h-[400px] py-48 border border-zinc-800/50 bg-zinc-900/20 rounded-3xl backdrop-blur-sm shadow-2xl">
+                <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-4" />
+                <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 animate-pulse">
+                    Synchronizing_Vault_Data...
+                </p>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-32 border border-dashed border-zinc-800 rounded-3xl opacity-50">
-              <Database className="w-8 h-8 mb-4 text-zinc-700" />
-              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-600">Sector_Empty_No_Matching_Records</p>
-            </div>
-          )}
+            ) : filteredHistory.length > 0 ? (
+                /* Added outline-none and suppressed focus ring on the grid itself */
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-in fade-in duration-700 outline-none focus:ring-0">
+                {filteredHistory.map((inv) => (
+                    <div 
+                    key={inv.id} 
+                    onClick={() => handleOpenDetails(inv)}
+                    className="p-6 bg-zinc-900/40 border border-zinc-800 rounded-2xl hover:border-blue-500/30 transition-all cursor-pointer group shadow-xl backdrop-blur-sm focus:outline-none"
+                    >
+                    <div className="flex justify-between items-start mb-6">
+                        <div>
+                        <h4 className="text-white font-bold group-hover:text-blue-400 transition-colors truncate max-w-[180px]">{inv.vendor_name}</h4>
+                        <p className="text-[9px] text-zinc-500 font-mono uppercase tracking-widest mt-1">
+                            {inv.category} {"//"} {inv.invoice_date}
+                        </p>
+                        </div>
+                        <FileText className="w-5 h-5 text-zinc-700 group-hover:text-blue-500 transition-colors" />
+                    </div>
+                    <div className="flex justify-between items-end border-t border-zinc-800/50 pt-4">
+                        <p className="text-blue-400 font-mono font-black text-xl">${inv.total_amount}</p>
+                        <CheckCircle className="w-4 h-4 text-green-500/20" />
+                    </div>
+                    </div>
+                ))}
+                </div>
+            ) : (
+                <div className="flex flex-col items-center justify-center py-32 border border-dashed border-zinc-800 rounded-3xl opacity-50">
+                <Database className="w-8 h-8 mb-4 text-zinc-700" />
+                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-600">Sector_Empty_No_Matching_Records</p>
+                </div>
+            )}
         </main>
       </div>
 
-      {/* --- DETAIL MODAL --- */}
       {selectedInvoice && (
         <div 
           onClick={() => { setSelectedInvoice(null); setDownloadUrl(null); }}
@@ -173,7 +187,7 @@ export default function VaultPage() {
         >
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col relative cursor-default"
+            className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col relative cursor-default focus:outline-none"
           >
             <div className="p-8 border-b border-zinc-800 flex justify-between items-start bg-zinc-950/50 backdrop-blur-xl">
               <div className="space-y-2">
