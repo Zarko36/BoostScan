@@ -8,9 +8,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     const getUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (session?.user?.email) {
-        setUserName(session.user.email.split('@')[0]);
+        setUserName(session.user.email.split("@")[0]);
       }
     };
     getUser();
@@ -33,13 +35,33 @@ export default function Dashboard() {
       {/* Placeholder Stats for the Burn Rate Hub */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
         {[
-          { label: "Active_Vault_Records", val: "Online", icon: Activity, color: "text-blue-500" },
-          { label: "Monthly_Burn_Rate", val: "Syncing...", icon: TrendingUp, color: "text-green-500" },
-          { label: "Scanner_Module", val: "Ready", icon: Zap, color: "text-yellow-500" },
+          {
+            label: "Active_Vault_Records",
+            val: "Online",
+            icon: Activity,
+            color: "text-blue-500",
+          },
+          {
+            label: "Monthly_Burn_Rate",
+            val: "Syncing...",
+            icon: TrendingUp,
+            color: "text-green-500",
+          },
+          {
+            label: "Scanner_Module",
+            val: "Ready",
+            icon: Zap,
+            color: "text-yellow-500",
+          },
         ].map((stat, i) => (
-          <div key={i} className="p-6 bg-zinc-900/50 border border-zinc-800 rounded-2xl hover:border-zinc-700 transition-colors">
+          <div
+            key={i}
+            className="p-6 bg-zinc-900/50 border border-zinc-800 rounded-2xl hover:border-zinc-700 transition-colors"
+          >
             <stat.icon className={`w-5 h-5 ${stat.color} mb-4`} />
-            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{stat.label}</p>
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">
+              {stat.label}
+            </p>
             <p className="text-xl font-bold text-white mt-1">{stat.val}</p>
           </div>
         ))}
@@ -48,7 +70,8 @@ export default function Dashboard() {
       <div className="p-12 border border-dashed border-zinc-800 rounded-3xl text-center bg-zinc-900/20">
         <Cpu className="w-8 h-8 text-zinc-700 mx-auto mb-4" />
         <p className="text-zinc-600 font-mono text-xs uppercase tracking-[0.2em] max-w-md mx-auto leading-relaxed">
-          Dashboard analytics are currently offline. Use the sidebar to access the Scanner or view your Persistent Vault.
+          Dashboard analytics are currently offline. Use the sidebar to access
+          the Scanner or view your Persistent Vault.
         </p>
       </div>
     </div>

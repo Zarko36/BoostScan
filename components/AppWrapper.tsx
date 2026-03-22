@@ -9,15 +9,23 @@ import { LayoutDashboard, Upload, Database, LogOut, Cpu } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-export default function AppWrapper({ children }: { children: React.ReactNode }) {
+export default function AppWrapper({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   // Fix: Specify Session | null instead of any
   const [session, setSession] = useState<Session | null>(null);
   const pathname = usePathname();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
-    
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => setSession(session));
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
 
@@ -33,9 +41,18 @@ export default function AppWrapper({ children }: { children: React.ReactNode }) 
               <Cpu className="w-8 h-8 text-blue-500" />
             </div>
           </div>
-          <h1 className="text-2xl font-black text-white mb-2 italic uppercase tracking-tighter">Initialize_Session</h1>
-          <p className="text-zinc-500 text-xs mb-8 font-mono tracking-widest uppercase">BoostScan AI // Auth_Protocol</p>
-          <Auth supabaseClient={supabase} appearance={{ theme: ThemeSupa }} theme="dark" providers={[]} />
+          <h1 className="text-2xl font-black text-white mb-2 italic uppercase tracking-tighter">
+            Initialize_Session
+          </h1>
+          <p className="text-zinc-500 text-xs mb-8 font-mono tracking-widest uppercase">
+            BoostScan AI // Auth_Protocol
+          </p>
+          <Auth
+            supabaseClient={supabase}
+            appearance={{ theme: ThemeSupa }}
+            theme="dark"
+            providers={[]}
+          />
         </div>
       </main>
     );
@@ -52,8 +69,12 @@ export default function AppWrapper({ children }: { children: React.ReactNode }) 
       {/* Sidebar */}
       <aside className="w-64 border-r border-zinc-800 bg-zinc-950 flex flex-col p-6 fixed h-full z-40">
         <div className="mb-10">
-          <h1 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-600 tracking-tighter uppercase italic">BoostScan AI</h1>
-          <p className="text-[10px] text-zinc-600 font-mono tracking-widest uppercase">Vault_Status: Secure</p>
+          <h1 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-600 tracking-tighter uppercase italic">
+            BoostScan AI
+          </h1>
+          <p className="text-[10px] text-zinc-600 font-mono tracking-widest uppercase">
+            Vault_Status: Secure
+          </p>
         </div>
 
         <nav className="flex-1 space-y-2">
@@ -61,13 +82,13 @@ export default function AppWrapper({ children }: { children: React.ReactNode }) 
             const Icon = item.icon;
             const isActive = pathname === item.href;
             return (
-              <Link 
-                key={item.name} 
-                href={item.href} 
+              <Link
+                key={item.name}
+                href={item.href}
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl font-mono text-xs tracking-widest uppercase transition-all ${
-                  isActive 
-                    ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' 
-                    : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900'
+                  isActive
+                    ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                    : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900"
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -77,8 +98,8 @@ export default function AppWrapper({ children }: { children: React.ReactNode }) 
           })}
         </nav>
 
-        <button 
-          onClick={() => supabase.auth.signOut()} 
+        <button
+          onClick={() => supabase.auth.signOut()}
           className="flex items-center gap-3 px-4 py-3 text-zinc-500 hover:text-red-400 font-mono text-xs tracking-widest uppercase transition-colors"
         >
           <LogOut className="w-4 h-4" /> Sign_Out
@@ -86,9 +107,7 @@ export default function AppWrapper({ children }: { children: React.ReactNode }) 
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 ml-64 p-8 md:p-12 min-h-screen">
-        {children}
-      </main>
+      <main className="flex-1 ml-64 p-8 md:p-12 min-h-screen">{children}</main>
     </div>
   );
 }
