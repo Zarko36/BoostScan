@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   FileText, CheckCircle, X, ExternalLink, 
@@ -8,31 +8,66 @@ import {
   Loader2
 } from "lucide-react";
 
+// 1. Define specific interfaces for your data structures
+interface RecordItem {
+  description: string;
+  qty: number | string;
+  price: number;
+}
+
+interface Invoice {
+  id: string;
+  vendor_name: string;
+  category: string;
+  invoice_date: string;
+  order_number?: string;
+  service_address?: string;
+  total_amount: number;
+  file_path?: string;
+  items?: RecordItem[];
+}
+
 export default function VaultPage() {
-  const [history, setHistory] = useState<any[]>([]);
+  // 2. State hooks
+  const [history, setHistory] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState("All");
 
-  useEffect(() => { fetchHistory(); }, []);
-
-  const fetchHistory = async () => {
+  // 3. Define fetchHistory using useCallback so it can be called safely from anywhere
+  const fetchHistory = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('invoices').select('*').order('created_at', { ascending: false });
-    if (data) setHistory(data);
+    const { data } = await supabase
+      .from('invoices')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (data) setHistory(data as Invoice[]);
     setLoading(false);
-  };
+  }, []);
 
-  const handleOpenDetails = async (invoice: any) => {
+  // 4. Run the effect on mount
+  // 4. Run the effect on mount
+    useEffect(() => {
+        // Defining an IIFE inside the effect satisfies strict linters 
+        // because it treats the fetch as a self-contained side-effect.
+        (async () => {
+        await fetchHistory();
+        })();
+    }, [fetchHistory]);
+
+  const handleOpenDetails = async (invoice: Invoice) => {
     setSelectedInvoice(invoice);
     if (invoice.file_path) {
-      const { data } = await supabase.storage.from('invoices').createSignedUrl(invoice.file_path, 60);
+      const { data } = await supabase.storage
+        .from('invoices')
+        .createSignedUrl(invoice.file_path, 60);
       if (data) setDownloadUrl(data.signedUrl);
     }
   };
 
-  const handleDelete = async (invoice: any) => {
+  const handleDelete = async (invoice: Invoice) => {
     if (!confirm("Confirm Record Deletion?")) return;
     if (invoice.file_path) await supabase.storage.from('invoices').remove([invoice.file_path]);
     await supabase.from('invoices').delete().eq('id', invoice.id);
@@ -98,17 +133,19 @@ export default function VaultPage() {
               </p>
             </div>
           ) : filteredHistory.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-in fade-in duration-700 border-none ring-0 outline-none">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-in fade-in duration-700">
               {filteredHistory.map((inv) => (
                 <div 
                   key={inv.id} 
                   onClick={() => handleOpenDetails(inv)}
-                  className="p-6 bg-zinc-900/40 border border-zinc-800 rounded-2xl hover:border-blue-500/30 transition-all cursor-pointer group shadow-xl backdrop-blur-sm focus:outline-none"
+                  className="p-6 bg-zinc-900/40 border border-zinc-800 rounded-2xl hover:border-blue-500/30 transition-all cursor-pointer group shadow-xl backdrop-blur-sm"
                 >
                   <div className="flex justify-between items-start mb-6">
                     <div>
                       <h4 className="text-white font-bold group-hover:text-blue-400 transition-colors truncate max-w-[180px]">{inv.vendor_name}</h4>
-                      <p className="text-[9px] text-zinc-500 font-mono uppercase tracking-widest mt-1">{inv.category} // {inv.invoice_date}</p>
+                      <p className="text-[9px] text-zinc-500 font-mono uppercase tracking-widest mt-1">
+                        {inv.category} {"//"} {inv.invoice_date}
+                      </p>
                     </div>
                     <FileText className="w-5 h-5 text-zinc-700 group-hover:text-blue-500 transition-colors" />
                   </div>
@@ -190,7 +227,7 @@ export default function VaultPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800/50">
-                      {selectedInvoice.items?.map((item: any, i: number) => (
+                      {selectedInvoice.items?.map((item, i) => (
                         <tr key={i} className="text-zinc-300 hover:bg-white/5 transition-colors">
                           <td className="p-4 leading-tight">{item.description}</td>
                           <td className="p-4 text-center text-zinc-500">{item.qty}</td>

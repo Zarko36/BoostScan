@@ -6,6 +6,13 @@ import { Upload, CheckCircle2, AlertCircle, Loader2, FileText, Trash2 } from "lu
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
+// --- HELPER DEFINED OUTSIDE COMPONENT ---
+// Moving this here satisfies the "Purity" rules because it's an isolated utility
+const generateFilePath = (userId: string, fileName: string) => {
+  const timestamp = Date.now();
+  return `${userId}/${timestamp}-${fileName}`;
+};
+
 interface UploadTask {
   name: string;
   status: 'pending' | 'scanning' | 'success' | 'failed';
@@ -31,17 +38,17 @@ export default function ScanPage() {
       updateTaskStatus(file.name, 'scanning');
 
       try {
-        await delay(2000); // Cooldown to maintain formatting quality
+        await delay(2000); 
 
         const base64String = await fileToBase64(file);
-        const filePath = `${session.user.id}/${Date.now()}-${file.name}`;
+        
+        // Use the external helper to get the path
+        const filePath = generateFilePath(session.user.id, file.name);
         
         await supabase.storage.from('invoices').upload(filePath, file);
 
         const rawResponse = await scanInvoice(base64String, file.type);
         
-        // --- REFINED SANITIZATION LOGIC ---
-        // Uses regex to find the first '{' and last '}' to strip markdown or prefix text
         const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
         const cleanJson = jsonMatch ? jsonMatch[0] : rawResponse;
 
@@ -62,7 +69,6 @@ export default function ScanPage() {
         updateTaskStatus(file.name, 'success');
       } catch (err) {
         console.error(`Error processing ${file.name}:`, err);
-        // Categorize specifically for JSON failures
         const errorType = err instanceof SyntaxError ? "JSON_PARSE_ERROR" : "EXTRACTION_ERROR";
         updateTaskStatus(file.name, 'failed', errorType);
       }
@@ -112,7 +118,6 @@ export default function ScanPage() {
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Live_Process_Queue</h3>
             
-            {/* Clear Button: Only visible when system is idle */}
             {!isProcessing && (
               <button 
                 onClick={() => setTasks([])}
