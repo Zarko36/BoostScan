@@ -3,64 +3,48 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
 
 export async function scanInvoice(base64Image: string, fileType: string) {
+  // Reverted to your original model version
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-  // const prompt = `
-  //   Analyze this invoice with high precision. 
-  //   Extract the following sections and format them as a professional technical report:
-
-  //   1. CUSTOMER & SHIPPING:
-  //     - Full Name
-  //     - Shipping Address (Street, City, State, Zip)
-  //     - Order Number
-
-  //   2. LINE ITEMS TABLE:
-  //     - Create a Markdown table with: [Item Description] | [SKU] | [Qty] | [Price] | [Total]
-
-  //   3. FINANCIAL SUMMARY:
-  //     - Subtotal
-  //     - Discounts (specify the type, e.g., '$5 OFF ON $129')
-  //     - Shipping & Handling
-  //     - Grand Total
-
-  //   4. VENDOR INFO:
-  //     - Vendor Name
-  //     - Contact Email/Support Link
-
-  //   If any field is missing, simply label it as 'NOT_FOUND'. 
-  //   Maintain a clean, monospaced aesthetic in the output.
-  // `;
-
   const prompt = `
-    Analyze this document (Invoice, Bill, or Receipt) and return a STRICT JSON object.
-    If a field is not applicable or not found, return null.
-    2. If there is a DISCOUNT, COUPON, or ADJUSTMENT that lowers the total, include it as a line item with a NEGATIVE price (e.g., -5.00).
-
-    Fields to extract:
-    - vendor: (e.g., "Southern California Edison", "Netflix", "ECCPP")
-    - date: (The date the document was issued)
-    - due_date: (Important for monthly bills; null if not found)
-    - total: (The final amount paid or owed as a number)
-    - category: (Categorize this as: "Automotive", "Utilities", "Groceries", "Entertainment", or "Other")
-    - order_number: (Invoice ID, Order #, or Reference #)
-    - items: (An array of objects with description, qty, and price)
-    - service_address: (Use for Shipping Address or the location where service is provided)
+    ACT AS A PROFESSIONAL AUDITOR. ANALYZE THE ATTACHED DOCUMENT AND RETURN A STRICT JSON OBJECT.
+    
+    CORE GOAL: Extract data into the schema below regardless of the original document's layout or terminology.
+    
+    EXTRACTION GUIDELINES:
+    1. "vendor": The primary business name (e.g., ECCPP AutoParts Store).
+    2. "category": Select exactly one: "Mortgage or rent", "Food", "Transportation", "Utilities", "Subscriptions", "Personal expenses", "Savings and investments", "Debt or student loan payments", "Health care", or "Miscellaneous expenses".
+    3. "order_number": Any unique identifier like Order #, Invoice ID, or Ref # (e.g., E191109740).
+    4. "service_address": The physical location of service or the "Shipping Info" address (e.g., 6411 Siamese Place).
+    5. "items": Include EVERY line item, tax, shipping, and discount. 
+       - For any "Discount" or "OFF" amount (e.g., -$5.00), you MUST include it as an item with a negative price.
+    
+    STRICT JSON SCHEMA:
+    {
+      "vendor": "string",
+      "date": "YYYY-MM-DD",
+      "total": number,
+      "category": "string",
+      "order_number": "string",
+      "service_address": "string",
+      "items": [{ "description": "string", "qty": number, "price": number }]
+    }
   `;
 
   const fileData = {
     inlineData: {
       data: base64Image.includes(",") ? base64Image.split(",")[1] : base64Image,
-      // This dynamically sets the type (image/png, application/pdf, etc.)
       mimeType: fileType, 
     },
   };
 
   try {
     const result = await model.generateContent([prompt, fileData]);
-    const response = await result.response;
-    return response.text();
+    const text = result.response.text();
+    // Clean potential markdown formatting from the AI response
+    return text.replace(/```json|```/g, "").trim();
   } catch (error) {
-    console.error("Gemini Error:", error);
-    return "Scan failed. Google is likely warming up your quota. Try again in 1 minute.";
+    console.error("Scan Error:", error);
+    throw new Error("Failed to parse document. Please ensure the file is clear.");
   }
 }
