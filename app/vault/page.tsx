@@ -130,8 +130,14 @@ export default function VaultPage() {
 
       {/* --- DETAIL MODAL --- */}
       {selectedInvoice && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md animate-in fade-in zoom-in-95 duration-200">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col relative">
+        <div 
+          onClick={() => { setSelectedInvoice(null); setDownloadUrl(null); }}
+          className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md animate-in fade-in zoom-in-95 duration-200 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col relative cursor-default"
+          >
             <div className="p-8 border-b border-zinc-800 flex justify-between items-start bg-zinc-950/50 backdrop-blur-xl">
               <div className="space-y-2">
                 <h2 className="text-3xl font-black text-white italic uppercase tracking-tighter leading-none">{selectedInvoice.vendor_name}</h2>
@@ -213,4 +219,5 @@ export default function VaultPage() {
         </div>
       )}
     </div>
-  );}
+  );
+}
