@@ -1,4 +1,9 @@
 "use client";
+/**
+ * InsightStream: Batch_Ingest_Module
+ * This module handles multi-file uploads, converts them for AI processing,
+ * and implements a retry mechanism to ensure high-accuracy data extraction.
+ */
 import { useState, useCallback } from "react";
 import { scanInvoice } from "@/lib/gemini";
 import { supabase } from "@/lib/supabase";
@@ -12,8 +17,10 @@ import {
   Cpu,
 } from "lucide-react";
 
+// --- HELPER UTILITIES ---
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
+// Organized storage path: user_id/timestamp-filename.ext
 const generateFilePath = (userId: string, fileName: string) => {
   const timestamp = Date.now();
   return `${userId}/${timestamp}-${fileName}`;
@@ -26,9 +33,11 @@ interface UploadTask {
 }
 
 export default function ScanPage() {
+  // --- STATE ---
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Updates the UI state of a specific file in the processing queue
   const updateTaskStatus = useCallback(
     (name: string, status: UploadTask["status"], error?: string) => {
       setTasks((prev) =>
@@ -38,25 +47,29 @@ export default function ScanPage() {
     [],
   );
 
+  /**
+   * CORE LOGIC: processSingleFile
+   * Handles the lifecycle of a single invoice: Scan -> Retry (if needed) -> Upload -> DB Insert
+   */
   const processSingleFile = async (file: File, userId: string) => {
     updateTaskStatus(file.name, "scanning");
 
     try {
-      await delay(500);
+      await delay(500); // UI Buffer for smooth transitions
       const base64String = await fileToBase64(file);
       const filePath = generateFilePath(userId, file.name);
 
       let rawResponse;
       let parsedData;
       let retryAttempt = 0;
-      const maxRetries = 1; // It will scan once, then retry once if needed
+      const maxRetries = 1; // Control loop for extraction accuracy
 
-      // --- RETRY LOOP START ---
+      // --- INTELLIGENT RETRY LOOP ---
+      // If order_number is "NOT_RECORDED" or missing, it triggers a second pass.
       while (retryAttempt <= maxRetries) {
-        // On the second attempt (retryAttempt 1), we can append a "hint" if your scanInvoice supports it,
-        // or just run it again to let the model re-examine the pixels.
         rawResponse = await scanInvoice(base64String, file.type);
 
+        // Regex to extract JSON from Gemini's markdown response
         const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
         const cleanJson = jsonMatch ? jsonMatch[0] : rawResponse;
         parsedData = JSON.parse(cleanJson);
@@ -65,23 +78,23 @@ export default function ScanPage() {
           parsedData.order_number && parsedData.order_number !== "NOT_RECORDED";
 
         if (hasOrderNumber || retryAttempt === maxRetries) {
-          // If we found it, or we've reached the limit, break out and save
+          // Exit loop if data is complete OR we exhausted retries
           break;
         }
 
-        // If we get here, order_number was missing. Cooldown before retrying.
         console.log(`Order_Serial_Missing in ${file.name}. Retrying scan...`);
         retryAttempt++;
-        await delay(2000);
+        await delay(2000); // Cooldown to manage API rate limits
       }
-      // --- RETRY LOOP END ---
+      // --- END RETRY LOOP ---
 
-      // Upload to storage (doing this after successful extraction or max retries)
+      // 1. PERSIST TO STORAGE: Upload original file to Supabase Bucket
       const { error: uploadError } = await supabase.storage
         .from("invoices")
         .upload(filePath, file);
       if (uploadError) throw new Error("UPLOAD_FAILED");
 
+      // 2. PERSIST TO DATABASE: Save extracted metadata linked to the file_path
       await supabase.from("invoices").insert({
         user_id: userId,
         vendor_name: parsedData.vendor,
@@ -106,10 +119,15 @@ export default function ScanPage() {
     }
   };
 
+  /**
+   * BATCH HANDLER: processFiles
+   * Orchestrates multiple concurrent uploads using Promise.all
+   */
   const processFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
+    // Security check: Ensure user is authenticated before starting ingest
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -123,6 +141,7 @@ export default function ScanPage() {
     setTasks((prev) => [...prev, ...newTasks]);
     setIsProcessing(true);
 
+    // Execute all file processing tasks in parallel
     await Promise.all(
       files.map((file) => processSingleFile(file, session.user.id)),
     );
@@ -130,6 +149,7 @@ export default function ScanPage() {
     setIsProcessing(false);
   };
 
+  // Convert browser file object to Base64 for Gemini API transmission
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -139,9 +159,10 @@ export default function ScanPage() {
     });
   };
 
+  // --- RENDER ---
   return (
     <div className="max-w-4xl mx-auto py-10 px-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      {/* HEADER - Consistent with Dashboard/Vault */}
+      {/* HEADER SECTION */}
       <header className="mb-12 text-center md:text-left">
         <h2 className="text-4xl font-black text-white italic uppercase tracking-tighter">
           Batch_Ingest_Module
@@ -155,9 +176,8 @@ export default function ScanPage() {
         </div>
       </header>
 
-      {/* UPLOAD AREA - Blue Glow & Interactive Hover States */}
+      {/* DRAG & DROP / CLICK UPLOAD AREA */}
       <div className="relative group mb-12">
-        {/* Ambient Glow Backdrop */}
         <div className="absolute -inset-1 bg-blue-600/20 rounded-[2.5rem] blur-2xl opacity-0 group-hover:opacity-100 transition duration-500"></div>
 
         <label
@@ -195,7 +215,7 @@ export default function ScanPage() {
         </label>
       </div>
 
-      {/* QUEUE SYSTEM */}
+      {/* QUEUE VISUALIZER */}
       {tasks.length > 0 && (
         <div className="space-y-4 bg-zinc-900/20 p-8 rounded-3xl border border-zinc-800/50 shadow-2xl backdrop-blur-sm">
           <div className="flex justify-between items-center mb-6 border-b border-zinc-800/50 pb-4">
@@ -237,6 +257,7 @@ export default function ScanPage() {
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
+                  {/* Task Status Indicators: Scanning, Success, or Error */}
                   {task.status === "scanning" && (
                     <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-md shadow-[0_0_10px_rgba(59,130,246,0.1)]">
                       <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />
