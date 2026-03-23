@@ -8,27 +8,60 @@ export async function scanInvoice(base64Image: string, fileType: string) {
   // Stick to the 2.5-flash model you specified
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
+  // const prompt = `
+  //   SYSTEM: ACT AS AN EXPERT DATA EXTRACTOR.
+  //   TASK: ANALYZE THE IMAGE AND OUTPUT ONLY A JSON OBJECT. NO PROSE. NO EXPLANATIONS.
+
+  //   CRITICAL SEARCH FOR "order_number":
+  //   - Many invoices for auto parts use "Ref", "Invoice #", or "PO Number".
+  //   - If you see a string like "E1911..." or any long alphanumeric code near the top, that is the order_number.
+  //   - DO NOT skip this field. If you see any reference ID, put it here.
+
+  //   FIELD DEFINITIONS:
+  //   1. "vendor": Business name (e.g. SubaruPartsDirect, ECCPP).
+  //   2. "category": Must be one of ["Mortgage or rent", "Food", "Transportation", "Utilities", "Subscriptions", "Personal expenses", "Savings and investments", "Debt or student loan payments", "Health care", "Miscellaneous expenses"].
+  //   3. "order_number": String. Look for Order ID, Ref, or Invoice ID.
+  //   4. "service_address": String. Shipping or service location.
+  //   5. "items": Array of { "description": string, "qty": number|string, "price": number }.
+
+  //   OUTPUT FORMAT:
+  //   {
+  //     "vendor": "string",
+  //     "date": "YYYY-MM-DD",
+  //     "total": number,
+  //     "category": "string",
+  //     "order_number": "string",
+  //     "service_address": "string",
+  //     "items": []
+  //   }
+  // `;
+
   const prompt = `
     SYSTEM: ACT AS AN EXPERT DATA EXTRACTOR. 
     TASK: ANALYZE THE IMAGE AND OUTPUT ONLY A JSON OBJECT. NO PROSE. NO EXPLANATIONS.
 
-    CRITICAL SEARCH FOR "order_number":
-    - Many invoices for auto parts use "Ref", "Invoice #", or "PO Number".
-    - If you see a string like "E1911..." or any long alphanumeric code near the top, that is the order_number.
-    - DO NOT skip this field. If you see any reference ID, put it here.
+    CRITICAL SEARCH:
+    - "order_number": Look for Ref, Invoice #, or PO Number.
+    - "financials": Separate the subtotal, tax, shipping, and any discounts.
 
     FIELD DEFINITIONS:
-    1. "vendor": Business name (e.g. SubaruPartsDirect, ECCPP).
-    2. "category": Must be one of ["Mortgage or rent", "Food", "Transportation", "Utilities", "Subscriptions", "Personal expenses", "Savings and investments", "Debt or student loan payments", "Health care", "Miscellaneous expenses"].
+    1. "vendor": Business name.
+    2. "category": One of ["Mortgage or rent", "Food", "Transportation", "Utilities", "Subscriptions", "Personal expenses", "Savings and investments", "Debt or student loan payments", "Health care", "Miscellaneous expenses"].
     3. "order_number": String. Look for Order ID, Ref, or Invoice ID.
     4. "service_address": String. Shipping or service location.
-    5. "items": Array of { "description": string, "qty": number|string, "price": number }.
+    5. "tax": Number. Extract sales tax or VAT. Default to 0.
+    6. "shipping": Number. Extract shipping/handling fees. Default to 0.
+    7. "discount": Number. Extract any applied discounts or coupons. Default to 0.
+    8. "items": Array of { "description": string, "qty": number|string, "price": number }.
     
     OUTPUT FORMAT:
     {
       "vendor": "string",
       "date": "YYYY-MM-DD",
       "total": number,
+      "tax": number,
+      "shipping": number,
+      "discount": number,
       "category": "string",
       "order_number": "string",
       "service_address": "string",
