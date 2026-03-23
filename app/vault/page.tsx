@@ -1,5 +1,10 @@
 "use client";
-import { scanInvoice } from "@/lib/gemini"; // Adjust the path if your file is named differently
+/**
+ * InsightStream: Persistent_Storage_Vault
+ * This page handles the retrieval, filtering, and detailed viewing of scanned invoices.
+ * Includes a manual re-scan feature to trigger the Gemini AI extraction again.
+ */
+import { scanInvoice } from "@/lib/gemini";
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -19,6 +24,7 @@ import {
   Loader2,
 } from "lucide-react";
 
+// --- TYPES & INTERFACES ---
 interface RecordItem {
   description: string;
   qty: number | string;
@@ -41,12 +47,14 @@ interface Invoice {
 }
 
 export default function VaultPage() {
+  // --- STATE MANAGEMENT ---
   const [history, setHistory] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState("All");
 
+  // Custom Toast Notification State
   const [toast, setToast] = useState<{
     show: boolean;
     message: string;
@@ -57,14 +65,16 @@ export default function VaultPage() {
     type: "success",
   });
 
+  // Helper to trigger UI notifications
   const showNotification = (
     message: string,
     type: "success" | "error" = "success",
   ) => {
     setToast({ show: true, message, type });
-    setTimeout(() => setToast({ ...toast, show: false }), 4000); // Auto-hide after 4s
+    setTimeout(() => setToast({ ...toast, show: false }), 4000);
   };
 
+  // --- DATA FETCHING (SUPABASE) ---
   const fetchHistory = useCallback(async () => {
     const { data, error } = await supabase
       .from("invoices")
@@ -79,6 +89,7 @@ export default function VaultPage() {
     setLoading(false);
   }, []);
 
+  // Initial Load Lifecycle
   useEffect(() => {
     let isMounted = true;
     const loadData = async () => {
@@ -91,6 +102,9 @@ export default function VaultPage() {
     };
   }, [fetchHistory]);
 
+  // --- ACTIONS: DETAILS, DELETE, & RESCAN ---
+
+  // Generates a temporary signed URL for viewing the original PDF/Image
   const handleOpenDetails = async (invoice: Invoice) => {
     setSelectedInvoice(invoice);
     if (invoice.file_path) {
@@ -101,6 +115,7 @@ export default function VaultPage() {
     }
   };
 
+  // Removes record from DB and deletes the associated file from Storage
   const handleDelete = async (invoice: Invoice) => {
     if (!confirm("Confirm Record Deletion?")) return;
     setLoading(true);
@@ -111,9 +126,15 @@ export default function VaultPage() {
     await fetchHistory();
   };
 
-  // Insert after handleDelete (around line 94)
   const [isRescanning, setIsRescanning] = useState(false);
 
+  /**
+   * MANUAL RESCAN LOGIC:
+   * 1. Fetches raw blob from Supabase Storage
+   * 2. Encodes to Base64 for the Gemini API
+   * 3. Re-runs the scanInvoice function
+   * 4. Updates the specific record in the database
+   */
   const handleManualRescan = async (invoice: Invoice) => {
     if (!invoice.file_path || isRescanning) return;
     setIsRescanning(true);
@@ -126,7 +147,7 @@ export default function VaultPage() {
 
       if (downloadError) throw downloadError;
 
-      // 2. Convert to Base64
+      // 2. Convert to Base64 (Required for Gemini endpoint)
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve) => {
         reader.onloadend = () => resolve(reader.result as string);
@@ -134,12 +155,12 @@ export default function VaultPage() {
       });
       const base64String = await base64Promise;
 
-      // 3. Re-run scan
+      // 3. Re-run Gemini AI extraction
       const rawResponse = await scanInvoice(base64String, fileBlob.type);
       const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
       const parsedData = JSON.parse(jsonMatch ? jsonMatch[0] : rawResponse);
 
-      // 4. Update Database
+      // 4. Update Database with newly extracted order_number
       const { error: updateError } = await supabase
         .from("invoices")
         .update({ order_number: parsedData.order_number })
@@ -147,21 +168,20 @@ export default function VaultPage() {
 
       if (updateError) throw updateError;
 
-      // Refresh UI state
+      // Refresh UI to show the new data
       await fetchHistory();
       setSelectedInvoice({ ...invoice, order_number: parsedData.order_number });
 
-      // SUCCESS NOTIFICATION
       showNotification("RE_SCAN_COMPLETE: Record_Synchronized", "success");
     } catch (err) {
       console.error("Rescan_Failed:", err);
-      // FAILURE NOTIFICATION
       showNotification("RE_SCAN_FAILED: AI_Extraction_Error", "error");
     } finally {
       setIsRescanning(false);
     }
   };
 
+  // --- FILTERING LOGIC ---
   const categories = [
     "All",
     "Mortgage or rent",
@@ -184,9 +204,10 @@ export default function VaultPage() {
     );
   });
 
+  // --- RENDER ---
   return (
     <div className="max-w-[1600px] mx-auto py-10 px-6 outline-none animate-in fade-in slide-in-from-bottom-4 duration-700">
-      {/* HEADER */}
+      {/* HEADER SECTION */}
       <header className="mb-12">
         <h2 className="text-4xl font-black text-white italic uppercase tracking-tighter">
           Persistent_Storage_Vault
@@ -201,7 +222,7 @@ export default function VaultPage() {
       </header>
 
       <div className="flex flex-col lg:flex-row gap-10">
-        {/* SIDEBAR - Category Hover Glow */}
+        {/* SIDEBAR NAVIGATION (Categories) */}
         <aside className="w-full lg:w-72 shrink-0">
           <div className="sticky top-10 space-y-2">
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-2 mb-4">
@@ -230,7 +251,7 @@ export default function VaultPage() {
           </div>
         </aside>
 
-        {/* MAIN CONTENT - Card Hover Glow */}
+        {/* MAIN RECORD GRID */}
         <main className="flex-1 outline-none">
           {loading ? (
             <div className="flex flex-col items-center justify-center min-h-[400px] py-48 border border-zinc-800/50 bg-zinc-900/20 rounded-3xl backdrop-blur-sm shadow-2xl">
@@ -278,7 +299,7 @@ export default function VaultPage() {
         </main>
       </div>
 
-      {/* MODAL */}
+      {/* DETAIL OVERLAY (MODAL) */}
       {selectedInvoice && (
         <div
           onClick={() => {
@@ -291,6 +312,7 @@ export default function VaultPage() {
             onClick={(e) => e.stopPropagation()}
             className="bg-zinc-950 border border-zinc-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col relative cursor-default focus:outline-none"
           >
+            {/* Modal Header */}
             <div className="p-8 border-b border-zinc-800 flex justify-between items-start bg-zinc-900/50">
               <div className="space-y-2">
                 <h2 className="text-3xl font-black text-white italic uppercase tracking-tighter leading-none">
@@ -316,6 +338,7 @@ export default function VaultPage() {
               </button>
             </div>
 
+            {/* Modal Body / Scrollable Content */}
             <div className="p-8 overflow-y-auto custom-scrollbar flex-1 space-y-10">
               <div className="grid grid-cols-2 gap-8">
                 <div className="space-y-2">
@@ -331,7 +354,7 @@ export default function VaultPage() {
                     Order_Serial <Hash className="w-3 h-3" />
                   </div>
 
-                  {/* THIS IS THE UPDATED FLEX CONTAINER */}
+                  {/* ORDER NUMBER & RESCAN BUTTON */}
                   <div className="flex items-center justify-end gap-3 group/serial pl-5">
                     <p className="font-mono text-zinc-200 text-sm">
                       #{selectedInvoice.order_number || "NOT_RECORDED"}
@@ -355,6 +378,7 @@ export default function VaultPage() {
                 </div>
               </div>
 
+              {/* SERVICE LOCATION DATA */}
               {selectedInvoice.service_address && (
                 <div className="p-5 bg-zinc-900/50 border border-zinc-800 rounded-2xl space-y-3">
                   <div className="flex items-center gap-2 text-[9px] text-blue-500 uppercase font-black tracking-[0.2em]">
@@ -366,6 +390,7 @@ export default function VaultPage() {
                 </div>
               )}
 
+              {/* LINE ITEM TABLE */}
               <div className="bg-black border border-zinc-800 rounded-2xl overflow-hidden">
                 <div className="p-4 border-b border-zinc-800 bg-zinc-900/50 flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -412,6 +437,7 @@ export default function VaultPage() {
                         </tr>
                       ))}
                     </tbody>
+                    {/* TOTALS & TAX FOOTER */}
                     <tfoot className="border-t-2 border-zinc-800 bg-zinc-950/50">
                       <tr>
                         <td className="p-3 pl-4 text-zinc-500 uppercase tracking-widest text-[9px]">
@@ -460,6 +486,7 @@ export default function VaultPage() {
                 </div>
               </div>
 
+              {/* ACTION BUTTONS (External Link & Delete) */}
               <div className="flex flex-col gap-3 pt-4">
                 {downloadUrl && (
                   <a
@@ -483,7 +510,8 @@ export default function VaultPage() {
           </div>
         </div>
       )}
-      {/* TOAST NOTIFICATION SYSTEM */}
+
+      {/* GLOBAL TOAST NOTIFICATION SYSTEM */}
       {toast.show && (
         <div className="fixed bottom-10 right-10 z-[200] animate-in slide-in-from-right-10 duration-500">
           <div
