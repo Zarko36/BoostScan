@@ -44,8 +44,6 @@ export default function VaultPage() {
   const [selectedCategory, setSelectedCategory] = useState("All");
 
   const fetchHistory = useCallback(async () => {
-    // We remove the synchronous setLoading(true) from here
-    // to prevent the cascading render error during mount.
     const { data, error } = await supabase
       .from("invoices")
       .select("*")
@@ -61,21 +59,12 @@ export default function VaultPage() {
 
   useEffect(() => {
     let isMounted = true;
-
     const loadData = async () => {
-      // Call the fetch
       await fetchHistory();
-
-      // ONLY update loading state if the user is still on this page
-      if (isMounted) {
-        setLoading(false);
-      }
+      if (isMounted) setLoading(false);
     };
-
     loadData();
-
     return () => {
-      // When the user leaves the page, set this to false
       isMounted = false;
     };
   }, [fetchHistory]);
@@ -92,7 +81,7 @@ export default function VaultPage() {
 
   const handleDelete = async (invoice: Invoice) => {
     if (!confirm("Confirm Record Deletion?")) return;
-    setLoading(true); // Re-trigger loading state for deletion feedback
+    setLoading(true);
     if (invoice.file_path)
       await supabase.storage.from("invoices").remove([invoice.file_path]);
     await supabase.from("invoices").delete().eq("id", invoice.id);
@@ -123,51 +112,54 @@ export default function VaultPage() {
   });
 
   return (
-    <div className="max-w-[1600px] mx-auto py-10 px-6">
-      {/* HEADER */}
-      <div className="flex items-center gap-3 mb-10">
-        <Database className="w-5 h-5 text-blue-500" />
-        <div>
-          <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.4em]">
-            Persistent_Storage_Vault
-          </h3>
-          <p className="text-[9px] text-zinc-600 font-mono mt-1 uppercase tracking-widest">
-            {loading
-              ? "Initializing_Index..."
-              : `Active_Records: ${history.length}`}
+    <div className="max-w-[1600px] mx-auto py-10 px-6 outline-none animate-in fade-in slide-in-from-bottom-4 duration-700">
+      {/* HEADER - Matches Dashboard Typography */}
+      <header className="mb-12">
+        <h2 className="text-4xl font-black text-white italic uppercase tracking-tighter">
+          Persistent_Storage_Vault
+        </h2>
+        <div className="flex items-center gap-3 mt-2">
+          <div className="w-2 h-2 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
+          <p className="text-zinc-500 font-mono text-xs tracking-[0.3em] uppercase">
+            Active_Records: {loading ? "..." : history.length} {"//"}{" "}
+            Storage_Secure
           </p>
         </div>
-      </div>
+      </header>
 
-      <div className="flex flex-col lg:flex-row gap-12">
-        <aside className="w-full lg:w-64 shrink-0">
-          <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest px-4 mb-4">
-            Database_Sectors [{loading ? "..." : filteredHistory.length}]
-          </p>
-          <nav className="flex flex-col gap-1">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`group flex items-center justify-between px-4 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border ${
-                  selectedCategory === cat
-                    ? "bg-blue-600/10 border-blue-500/30 text-blue-400 shadow-lg shadow-blue-900/10"
-                    : "bg-transparent border-transparent text-zinc-600 hover:bg-zinc-900/50 hover:text-zinc-400"
-                }`}
-              >
-                <span className="truncate pr-2">{cat}</span>
-                {selectedCategory === cat && (
-                  <ChevronRight className="w-3 h-3" />
-                )}
-              </button>
-            ))}
-          </nav>
+      <div className="flex flex-col lg:flex-row gap-10">
+        {/* SIDEBAR - Improved Legibility & Color Palette */}
+        <aside className="w-full lg:w-72 shrink-0">
+          <div className="sticky top-10 space-y-2">
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-2 mb-4">
+              Sector_Filters [{filteredHistory.length}]
+            </p>
+            <nav className="flex flex-col gap-1.5">
+              {categories.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`group flex items-center justify-between px-4 py-3 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border outline-none focus:outline-none ${
+                    selectedCategory === cat
+                      ? "bg-zinc-900 border-zinc-700 text-white shadow-lg"
+                      : "bg-zinc-900/30 border-transparent text-zinc-500 hover:bg-zinc-900/60 hover:text-zinc-300 hover:border-zinc-800"
+                  }`}
+                >
+                  <span className="truncate pr-2">{cat}</span>
+                  {selectedCategory === cat ? (
+                    <ChevronRight className="w-3 h-3 text-blue-500" />
+                  ) : (
+                    <div className="w-1 h-1 bg-zinc-800 rounded-full group-hover:bg-zinc-600 transition-colors" />
+                  )}
+                </button>
+              ))}
+            </nav>
+          </div>
         </aside>
 
         {/* --- MAIN CONTENT AREA --- */}
-        <main className="flex-1 outline-none focus:outline-none">
+        <main className="flex-1 outline-none">
           {loading ? (
-            /* Added min-h to match common vault height and prevent layout snapping */
             <div className="flex flex-col items-center justify-center min-h-[400px] py-48 border border-zinc-800/50 bg-zinc-900/20 rounded-3xl backdrop-blur-sm shadow-2xl">
               <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-4" />
               <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 animate-pulse">
@@ -175,13 +167,12 @@ export default function VaultPage() {
               </p>
             </div>
           ) : filteredHistory.length > 0 ? (
-            /* Added outline-none and suppressed focus ring on the grid itself */
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-in fade-in duration-700 outline-none focus:ring-0">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 outline-none">
               {filteredHistory.map((inv) => (
                 <div
                   key={inv.id}
                   onClick={() => handleOpenDetails(inv)}
-                  className="p-6 bg-zinc-900/40 border border-zinc-800 rounded-2xl hover:border-blue-500/30 transition-all cursor-pointer group shadow-xl backdrop-blur-sm focus:outline-none"
+                  className="p-6 bg-zinc-900/50 border border-zinc-800 rounded-2xl hover:border-zinc-600 transition-all cursor-pointer group shadow-xl backdrop-blur-sm focus:outline-none"
                 >
                   <div className="flex justify-between items-start mb-6">
                     <div>
@@ -204,7 +195,7 @@ export default function VaultPage() {
               ))}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center py-32 border border-dashed border-zinc-800 rounded-3xl opacity-50">
+            <div className="flex flex-col items-center justify-center py-32 border border-dashed border-zinc-800 rounded-3xl bg-zinc-900/10">
               <Database className="w-8 h-8 mb-4 text-zinc-700" />
               <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-600">
                 Sector_Empty_No_Matching_Records
@@ -214,6 +205,7 @@ export default function VaultPage() {
         </main>
       </div>
 
+      {/* MODAL OVERLAY (Kept largely the same, optimized typography) */}
       {selectedInvoice && (
         <div
           onClick={() => {
@@ -224,9 +216,9 @@ export default function VaultPage() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col relative cursor-default focus:outline-none"
+            className="bg-zinc-950 border border-zinc-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col relative cursor-default focus:outline-none"
           >
-            <div className="p-8 border-b border-zinc-800 flex justify-between items-start bg-zinc-950/50 backdrop-blur-xl">
+            <div className="p-8 border-b border-zinc-800 flex justify-between items-start bg-zinc-900/50">
               <div className="space-y-2">
                 <h2 className="text-3xl font-black text-white italic uppercase tracking-tighter leading-none">
                   {selectedInvoice.vendor_name}
@@ -252,6 +244,7 @@ export default function VaultPage() {
             </div>
 
             <div className="p-8 overflow-y-auto custom-scrollbar flex-1 space-y-10">
+              {/* Detailed Invoice Info section stays as is */}
               <div className="grid grid-cols-2 gap-8">
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-[9px] text-zinc-500 uppercase font-black tracking-[0.2em]">
@@ -272,7 +265,7 @@ export default function VaultPage() {
               </div>
 
               {selectedInvoice.service_address && (
-                <div className="p-5 bg-zinc-800/30 border border-zinc-800 rounded-2xl space-y-3">
+                <div className="p-5 bg-zinc-900/50 border border-zinc-800 rounded-2xl space-y-3">
                   <div className="flex items-center gap-2 text-[9px] text-blue-500 uppercase font-black tracking-[0.2em]">
                     <MapPin className="w-4 h-4" /> Service_Location_Data
                   </div>
@@ -282,8 +275,8 @@ export default function VaultPage() {
                 </div>
               )}
 
-              <div className="bg-black/40 border border-zinc-800 rounded-2xl overflow-hidden shadow-inner">
-                <div className="p-4 border-b border-zinc-800 bg-zinc-800/30 flex items-center justify-between">
+              <div className="bg-black border border-zinc-800 rounded-2xl overflow-hidden">
+                <div className="p-4 border-b border-zinc-800 bg-zinc-900/50 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <ReceiptText className="w-4 h-4 text-blue-500" />
                     <p className="text-[9px] font-black text-zinc-400 uppercase tracking-[0.2em]">
@@ -297,6 +290,7 @@ export default function VaultPage() {
                 </div>
                 <div className="max-h-60 overflow-y-auto">
                   <table className="w-full text-left font-mono text-[11px]">
+                    {/* table head/body stay the same */}
                     <thead className="sticky top-0 bg-zinc-900 text-zinc-500 border-b border-zinc-800">
                       <tr>
                         <th className="p-4 font-normal uppercase tracking-tighter">
