@@ -54,6 +54,7 @@ export default function ScanPage() {
    * CORE LOGIC: processSingleFile
    * Includes Exponential Backoff for 503 stability and Supabase integration.
    */
+
   const processSingleFile = async (file: File, userId: string) => {
     updateTaskStatus(file.name, "scanning");
 
@@ -72,10 +73,8 @@ export default function ScanPage() {
           const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
           const cleanJson = jsonMatch ? jsonMatch[0] : rawResponse;
           
-          // Parse raw data first to normalize keys
           const rawData = JSON.parse(cleanJson);
 
-          // Map to InvoiceExtraction interface safely
           parsedData = {
             ...rawData,
             total_amount: rawData.total_amount ?? rawData.total ?? 0,
@@ -87,20 +86,28 @@ export default function ScanPage() {
 
           if (parsedData.vendor && parsedData.vendor !== "NOT_RECORDED") break;
         } catch (err: unknown) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
+          // SAFE ERROR STRINGIFYING
+          const errorMessage = err instanceof Error 
+            ? err.message 
+            : JSON.stringify(err);
+          
+          console.error(`Attempt ${retryAttempt + 1} failed for ${file.name}:`, errorMessage);
+
+          // Check for retryable conditions in the stringified error
           const isRetryable = 
             errorMessage.includes("503") || 
             errorMessage.includes("429") || 
+            errorMessage.includes("overloaded") ||
             errorMessage.includes("fetch");
 
           if (isRetryable && retryAttempt < maxRetries) {
             const waitTime = Math.pow(2, retryAttempt + 1) * 1000;
-            console.warn(`System busy. Retrying ${file.name} in ${waitTime}ms...`);
+            console.warn(`Retrying ${file.name} in ${waitTime}ms...`);
             await delay(waitTime);
             retryAttempt++;
             continue;
           }
-          throw err;
+          throw err; // If not retryable or max reached, exit to outer catch
         }
         retryAttempt++;
       }
@@ -133,16 +140,14 @@ export default function ScanPage() {
 
       updateTaskStatus(file.name, "success");
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error(`Final failure for ${file.name}:`, errorMessage);
+      // Final detailed log to help us debug the specific [object Object]
+      console.error("DETAILED_FINAL_ERROR:", err);
       
-      const userFriendlyError = errorMessage.includes("503") || errorMessage.includes("429") 
-        ? "SERVER_BUSY" 
-        : "API_ERROR";
-        
-      updateTaskStatus(file.name, "failed", userFriendlyError);
+      const errorString = err instanceof Error ? err.message : JSON.stringify(err);
+      updateTaskStatus(file.name, "failed", errorString.slice(0, 20)); // Keep UI clean
     }
   };
+  
 
   const processFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
