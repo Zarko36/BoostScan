@@ -77,8 +77,8 @@ export default function ScanPage() {
 
           parsedData = {
             ...rawData,
-            total_amount: rawData.total_amount ?? rawData.total ?? 0,
-            tax_amount: rawData.tax_amount ?? rawData.tax,
+            total_amount: Number(rawData.total_amount ?? rawData.total ?? 0),
+            tax_amount: Number(rawData.tax_amount ?? rawData.tax ?? 0),
             vendor: rawData.vendor || "UNKNOWN_VENDOR",
             category: rawData.category || "Uncategorized",
             items: rawData.items ?? [],
@@ -86,28 +86,22 @@ export default function ScanPage() {
 
           if (parsedData.vendor && parsedData.vendor !== "NOT_RECORDED") break;
         } catch (err: unknown) {
-          // SAFE ERROR STRINGIFYING
-          const errorMessage = err instanceof Error 
-            ? err.message 
-            : JSON.stringify(err);
+          const errorMessage = err instanceof Error ? err.message : JSON.stringify(err);
           
-          console.error(`Attempt ${retryAttempt + 1} failed for ${file.name}:`, errorMessage);
-
-          // Check for retryable conditions in the stringified error
           const isRetryable = 
             errorMessage.includes("503") || 
             errorMessage.includes("429") || 
-            errorMessage.includes("overloaded") ||
-            errorMessage.includes("fetch");
+            errorMessage.includes("SyntaxError") ||
+            errorMessage.includes("position");
 
           if (isRetryable && retryAttempt < maxRetries) {
             const waitTime = Math.pow(2, retryAttempt + 1) * 1000;
-            console.warn(`Retrying ${file.name} in ${waitTime}ms...`);
+            console.warn(`[Retry ${retryAttempt + 1}] ${file.name}: ${errorMessage.slice(0, 50)}`);
             await delay(waitTime);
             retryAttempt++;
             continue;
           }
-          throw err; // If not retryable or max reached, exit to outer catch
+          throw err; 
         }
         retryAttempt++;
       }
@@ -122,29 +116,41 @@ export default function ScanPage() {
       if (storageError) throw storageError;
 
       // 3. DATABASE INSERT
-      const { error: dbError } = await supabase.from("invoices").insert([
-        {
-          user_id: userId,
-          file_path: filePath,
-          vendor: parsedData.vendor,
-          invoice_number: parsedData.invoice_number || parsedData.order_number,
-          date: parsedData.date,
-          total_amount: parsedData.total_amount,
-          tax_amount: parsedData.tax_amount,
-          category: parsedData.category,
-          raw_json: parsedData,
-        },
-      ]);
+      // Mapping the interface to your EXACT Supabase column names
+      const insertData = {
+        user_id: userId,
+        file_path: filePath,
+        vendor: parsedData.vendor,
+        invoice_number: parsedData.invoice_number || parsedData.order_number,
+        total_amount: parsedData.total_amount,
+        tax_amount: parsedData.tax_amount,
+        category: parsedData.category,
+        // If Supabase still complains about these two, 
+        // verify their names in the Supabase Dashboard:
+        date: parsedData.date, 
+        raw_json: parsedData 
+      };
 
-      if (dbError) throw dbError;
+      const { error: dbError } = await supabase.from("invoices").insert([insertData]);
+
+      if (dbError) {
+        console.error("SUPABASE_INSERT_ERROR:", dbError);
+        // Fallback: Try inserting without the problematic columns if they are missing
+        if (dbError.message.includes("column")) {
+           console.warn("Attempting emergency insert without date/raw_json...");
+           const { date, raw_json, ...fallbackData } = insertData;
+           const { error: retryDbError } = await supabase.from("invoices").insert([fallbackData]);
+           if (retryDbError) throw retryDbError;
+        } else {
+          throw dbError;
+        }
+      }
 
       updateTaskStatus(file.name, "success");
     } catch (err: unknown) {
-      // Final detailed log to help us debug the specific [object Object]
       console.error("DETAILED_FINAL_ERROR:", err);
-      
-      const errorString = err instanceof Error ? err.message : JSON.stringify(err);
-      updateTaskStatus(file.name, "failed", errorString.slice(0, 20)); // Keep UI clean
+      const errorString = err instanceof Error ? err.message : "PROCESS_FAILED";
+      updateTaskStatus(file.name, "failed", errorString.slice(0, 30));
     }
   };
   
@@ -163,7 +169,7 @@ export default function ScanPage() {
     setIsProcessing(true);
 
     // Paid Tier: We can push to 4 or 5 workers safely
-    const CONCURRENCY_LIMIT = 4; 
+    const CONCURRENCY_LIMIT = 3; 
     const queue = [...files];
 
     const workers = Array(CONCURRENCY_LIMIT).fill(null).map(async (_, workerIndex) => {
