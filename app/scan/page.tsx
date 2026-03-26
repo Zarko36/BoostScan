@@ -7,6 +7,7 @@
 import { useState, useCallback } from "react";
 import { scanInvoice } from "@/lib/gemini";
 import { supabase } from "@/lib/supabase";
+import { InvoiceExtraction } from "../../types/invoice";
 import {
   Upload,
   CheckCircle2,
@@ -20,7 +21,6 @@ import {
 // --- HELPER UTILITIES ---
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-// Organized storage path: user_id/timestamp-filename.ext
 const generateFilePath = (userId: string, fileName: string) => {
   const timestamp = Date.now();
   return `${userId}/${timestamp}-${fileName}`;
@@ -33,11 +33,9 @@ interface UploadTask {
 }
 
 export default function ScanPage() {
-  // --- STATE ---
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Updates the UI state of a specific file in the processing queue
   const updateTaskStatus = useCallback(
     (name: string, status: UploadTask["status"], error?: string) => {
       setTasks((prev) =>
@@ -48,108 +46,150 @@ export default function ScanPage() {
   );
 
   /**
+   * Helper: Validates if a string is a valid ISO date (YYYY-MM-DD).
+   * Prevents Supabase '22007' invalid input syntax errors.
+   */
+  const isValidDate = (dateStr: string | null | undefined): boolean => {
+    if (!dateStr) return false;
+    const regex = /^\d{4}-\d{2}-\d{2}$/;
+    return regex.test(dateStr) && !isNaN(Date.parse(dateStr));
+  };
+
+  /**
    * CORE LOGIC: processSingleFile
-   * Handles the lifecycle of a single invoice: Scan -> Retry (if needed) -> Upload -> DB Insert
    */
   const processSingleFile = async (file: File, userId: string) => {
     updateTaskStatus(file.name, "scanning");
 
     try {
-      await delay(500); // UI Buffer for smooth transitions
       const base64String = await fileToBase64(file);
       const filePath = generateFilePath(userId, file.name);
 
-      let rawResponse;
-      let parsedData;
+      let parsedData: InvoiceExtraction | undefined;
       let retryAttempt = 0;
-      const maxRetries = 1; // Control loop for extraction accuracy
+      const maxRetries = 1;
 
       // --- INTELLIGENT RETRY LOOP ---
-      // If order_number is "NOT_RECORDED" or missing, it triggers a second pass.
       while (retryAttempt <= maxRetries) {
-        rawResponse = await scanInvoice(base64String, file.type);
-
-        // Regex to extract JSON from Gemini's markdown response
+        const rawResponse = await scanInvoice(base64String, file.type);
         const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
         const cleanJson = jsonMatch ? jsonMatch[0] : rawResponse;
-        parsedData = JSON.parse(cleanJson);
+        parsedData = JSON.parse(cleanJson) as InvoiceExtraction;
 
-        const hasOrderNumber =
-          parsedData.order_number && parsedData.order_number !== "NOT_RECORDED";
+        const isValid =
+          parsedData.vendor &&
+          parsedData.vendor !== "NOT_RECORDED" &&
+          (parsedData.invoice_number || parsedData.order_number);
 
-        if (hasOrderNumber || retryAttempt === maxRetries) {
-          // Exit loop if data is complete OR we exhausted retries
-          break;
-        }
+        if (isValid || retryAttempt === maxRetries) break;
 
-        console.log(`Order_Serial_Missing in ${file.name}. Retrying scan...`);
         retryAttempt++;
-        await delay(2000); // Cooldown to manage API rate limits
+        await delay(2000);
       }
-      // --- END RETRY LOOP ---
 
-      // 1. PERSIST TO STORAGE: Upload original file to Supabase Bucket
+      // --- FIX: Guard Clause to satisfy TypeScript ---
+      if (!parsedData) {
+        throw new Error("EXTRACTION_FAILED_NO_DATA");
+      }
+
+      // 1. PERSIST TO STORAGE
       const { error: uploadError } = await supabase.storage
         .from("invoices")
         .upload(filePath, file);
       if (uploadError) throw new Error("UPLOAD_FAILED");
 
-      // 2. PERSIST TO DATABASE: Save extracted metadata linked to the file_path
-      await supabase.from("invoices").insert({
+      // 2. DATA SANITIZATION & PERSIST TO DATABASE
+      const { error: dbError } = await supabase.from("invoices").insert({
         user_id: userId,
         vendor_name: parsedData.vendor,
         category: parsedData.category,
-        total_amount: parsedData.total,
+        
+        // Identification
+        invoice_number: parsedData.invoice_number,
+        order_number: parsedData.order_number,
+
+        // Dates & Terms (Sanitized)
+        invoice_date: isValidDate(parsedData.date) ? parsedData.date : null,
+        due_date: isValidDate(parsedData.due_date) ? parsedData.due_date : null,
+        
+        // Preservation of text-based terms
+        payment_terms: parsedData.payment_terms || (!isValidDate(parsedData.due_date) ? parsedData.due_date : null),
+
+        // Financials (Default to 0)
+        subtotal_amount: parsedData.subtotal || 0,
         tax_amount: parsedData.tax || 0,
         shipping_amount: parsedData.shipping || 0,
         discount_amount: parsedData.discount || 0,
-        invoice_date: parsedData.date,
-        items: parsedData.items,
-        order_number: parsedData.order_number,
+        total_amount: parsedData.total || 0,
+        currency: parsedData.currency || "USD",
+
+        // Contact & Address
+        seller_address: parsedData.seller_address,
+        seller_email: parsedData.seller_email,
+        seller_phone: parsedData.seller_phone,
         service_address: parsedData.service_address,
+
+        // Metadata
+        items: parsedData.items || [],
+        payment_methods: parsedData.payment_methods,
         file_path: filePath,
       });
+
+      if (dbError) throw dbError;
 
       updateTaskStatus(file.name, "success");
     } catch (err) {
       console.error(`Error processing ${file.name}:`, err);
-      const errorType =
-        err instanceof SyntaxError ? "JSON_PARSE_ERROR" : "EXTRACTION_ERROR";
-      updateTaskStatus(file.name, "failed", errorType);
+      updateTaskStatus(file.name, "failed", "PROCESS_ERROR");
     }
   };
 
   /**
-   * BATCH HANDLER: processFiles
-   * Orchestrates multiple concurrent uploads using Promise.all
+   * BATCH HANDLER: processFiles (Sequential processing)
    */
-  const processFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
+  /**
+ * BATCH HANDLER: processFiles (High-Efficiency Worker Pool)
+ * Processes files in small parallel chunks to maximize speed without API crashes.
+ */
+const processFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const files = Array.from(e.target.files || []);
+  if (files.length === 0) return;
 
-    // Security check: Ensure user is authenticated before starting ingest
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session) return;
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return;
 
-    const newTasks: UploadTask[] = files.map((f) => ({
-      name: f.name,
-      status: "pending",
-    }));
+  const newTasks: UploadTask[] = files.map((f) => ({
+    name: f.name,
+    status: "pending",
+  }));
 
-    setTasks((prev) => [...prev, ...newTasks]);
-    setIsProcessing(true);
+  setTasks((prev) => [...prev, ...newTasks]);
+  setIsProcessing(true);
 
-    // Execute all file processing tasks in parallel
-    await Promise.all(
-      files.map((file) => processSingleFile(file, session.user.id)),
-    );
+  // CONFIG: CONCURRENCY_LIMIT
+  // 3 is the "Sweet Spot" for the Gemini Free/Flash tier. 
+  const CONCURRENCY_LIMIT = 3; 
+  const queue = [...files];
+  
+  // Create "Workers" that pull from the same queue
+  const workers = Array(CONCURRENCY_LIMIT).fill(null).map(async () => {
+    while (queue.length > 0) {
+      const file = queue.shift(); // Pick up the next file
+      if (!file) break;
 
-    setIsProcessing(false);
-  };
+      await processSingleFile(file, session.user.id);
+      
+      // Small "Cool down" per worker to stagger the next request slightly
+      await delay(500); 
+    }
+  });
 
-  // Convert browser file object to Base64 for Gemini API transmission
+  // Wait for all workers to finish their assigned files
+  await Promise.all(workers);
+
+  setIsProcessing(false);
+};
+
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -159,10 +199,8 @@ export default function ScanPage() {
     });
   };
 
-  // --- RENDER ---
   return (
     <div className="max-w-4xl mx-auto py-10 px-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      {/* HEADER SECTION */}
       <header className="mb-12 text-center md:text-left">
         <h2 className="text-4xl font-black text-white italic uppercase tracking-tighter">
           Batch_Ingest_Module
@@ -176,7 +214,6 @@ export default function ScanPage() {
         </div>
       </header>
 
-      {/* DRAG & DROP / CLICK UPLOAD AREA */}
       <div className="relative group mb-12">
         <div className="absolute -inset-1 bg-blue-600/20 rounded-[2.5rem] blur-2xl opacity-0 group-hover:opacity-100 transition duration-500"></div>
 
@@ -196,9 +233,7 @@ export default function ScanPage() {
           </div>
 
           <h3 className="text-sm font-black text-white uppercase tracking-widest mb-2 group-hover:text-blue-400 transition-colors">
-            {isProcessing
-              ? "Ingesting_Data_Stream..."
-              : "Drop_Records_Into_Module"}
+            {isProcessing ? "Ingesting_Data_Stream..." : "Drop_Records_Into_Module"}
           </h3>
 
           <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest group-hover:text-zinc-400">
@@ -215,7 +250,6 @@ export default function ScanPage() {
         </label>
       </div>
 
-      {/* QUEUE VISUALIZER */}
       {tasks.length > 0 && (
         <div className="space-y-4 bg-zinc-900/20 p-8 rounded-3xl border border-zinc-800/50 shadow-2xl backdrop-blur-sm">
           <div className="flex justify-between items-center mb-6 border-b border-zinc-800/50 pb-4">
@@ -257,7 +291,6 @@ export default function ScanPage() {
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                  {/* Task Status Indicators: Scanning, Success, or Error */}
                   {task.status === "scanning" && (
                     <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-md shadow-[0_0_10px_rgba(59,130,246,0.1)]">
                       <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />

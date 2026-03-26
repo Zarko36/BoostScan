@@ -18,14 +18,17 @@
         "name": "next"
       }
     ],
+    "baseUrl": ".", // <--- ADD THIS LINE
     "paths": {
-      "@/*": ["./*"]
-    }
+    "@/*": ["./*"],
+    "@types/*": ["./types/*"] 
+  }
   },
   "include": [
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
+    "types/**/*.ts", // <--- ADD THIS TO BE EXPLICIT
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
