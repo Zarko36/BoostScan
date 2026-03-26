@@ -1,9 +1,5 @@
 "use client";
-/**
- * InsightStream: Batch_Ingest_Module
- * This module handles multi-file uploads, converts them for AI processing,
- * and implements a retry mechanism to ensure high-accuracy data extraction.
- */
+
 import { useState, useCallback } from "react";
 import { scanInvoice } from "@/lib/gemini";
 import { supabase } from "@/lib/supabase";
@@ -45,18 +41,18 @@ export default function ScanPage() {
     [],
   );
 
-  /**
-   * Helper: Validates if a string is a valid ISO date (YYYY-MM-DD).
-   * Prevents Supabase '22007' invalid input syntax errors.
-   */
-  const isValidDate = (dateStr: string | null | undefined): boolean => {
-    if (!dateStr) return false;
-    const regex = /^\d{4}-\d{2}-\d{2}$/;
-    return regex.test(dateStr) && !isNaN(Date.parse(dateStr));
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   };
 
   /**
    * CORE LOGIC: processSingleFile
+   * Includes Exponential Backoff for 503 stability and Supabase integration.
    */
   const processSingleFile = async (file: File, userId: string) => {
     updateTaskStatus(file.name, "scanning");
@@ -67,136 +63,105 @@ export default function ScanPage() {
 
       let parsedData: InvoiceExtraction | undefined;
       let retryAttempt = 0;
-      const maxRetries = 1;
+      const maxRetries = 3;
 
-      // --- INTELLIGENT RETRY LOOP ---
+      // 1. AI EXTRACTION LOOP
       while (retryAttempt <= maxRetries) {
-        const rawResponse = await scanInvoice(base64String, file.type);
-        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-        const cleanJson = jsonMatch ? jsonMatch[0] : rawResponse;
-        parsedData = JSON.parse(cleanJson) as InvoiceExtraction;
+        try {
+          const rawResponse = await scanInvoice(base64String, file.type);
+          const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+          const cleanJson = jsonMatch ? jsonMatch[0] : rawResponse;
+          parsedData = JSON.parse(cleanJson) as InvoiceExtraction;
 
-        const isValid =
-          parsedData.vendor &&
-          parsedData.vendor !== "NOT_RECORDED" &&
-          (parsedData.invoice_number || parsedData.order_number);
+          if (parsedData?.vendor && parsedData.vendor !== "NOT_RECORDED") break;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          const is503 = errorMessage.includes("503");
 
-        if (isValid || retryAttempt === maxRetries) break;
-
+          if (is503 && retryAttempt < maxRetries) {
+            const waitTime = Math.pow(2, retryAttempt + 1) * 1000;
+            console.warn(`Gemini Busy. Retrying ${file.name} in ${waitTime}ms...`);
+            await delay(waitTime);
+            retryAttempt++;
+            continue;
+          }
+          throw err;
+        }
         retryAttempt++;
-        await delay(2000);
       }
 
-      // --- FIX: Guard Clause to satisfy TypeScript ---
-      if (!parsedData) {
-        throw new Error("EXTRACTION_FAILED_NO_DATA");
-      }
+      if (!parsedData) throw new Error("EXTRACTION_FAILED");
 
-      // 1. PERSIST TO STORAGE
-      const { error: uploadError } = await supabase.storage
+      // 2. SUPABASE STORAGE UPLOAD
+      const { error: storageError } = await supabase.storage
         .from("invoices")
         .upload(filePath, file);
-      if (uploadError) throw new Error("UPLOAD_FAILED");
 
-      // 2. DATA SANITIZATION & PERSIST TO DATABASE
-      const { error: dbError } = await supabase.from("invoices").insert({
-        user_id: userId,
-        vendor_name: parsedData.vendor,
-        category: parsedData.category,
-        
-        // Identification
-        invoice_number: parsedData.invoice_number,
-        order_number: parsedData.order_number,
+      if (storageError) throw storageError;
 
-        // Dates & Terms (Sanitized)
-        invoice_date: isValidDate(parsedData.date) ? parsedData.date : null,
-        due_date: isValidDate(parsedData.due_date) ? parsedData.due_date : null,
-        
-        // Preservation of text-based terms
-        payment_terms: parsedData.payment_terms || (!isValidDate(parsedData.due_date) ? parsedData.due_date : null),
-
-        // Financials (Default to 0)
-        subtotal_amount: parsedData.subtotal || 0,
-        tax_amount: parsedData.tax || 0,
-        shipping_amount: parsedData.shipping || 0,
-        discount_amount: parsedData.discount || 0,
-        total_amount: parsedData.total || 0,
-        currency: parsedData.currency || "USD",
-
-        // Contact & Address
-        seller_address: parsedData.seller_address,
-        seller_email: parsedData.seller_email,
-        seller_phone: parsedData.seller_phone,
-        service_address: parsedData.service_address,
-
-        // Metadata
-        items: parsedData.items || [],
-        payment_methods: parsedData.payment_methods,
-        file_path: filePath,
-      });
+      // 3. DATABASE INSERT
+      const { error: dbError } = await supabase.from("invoices").insert([
+        {
+          user_id: userId,
+          file_path: filePath,
+          vendor: parsedData.vendor,
+          invoice_number: parsedData.invoice_number || parsedData.order_number,
+          date: parsedData.date,
+          total_amount: parsedData.total,
+          tax_amount: parsedData.tax,
+          category: parsedData.category,
+          raw_json: parsedData,
+        },
+      ]);
 
       if (dbError) throw dbError;
 
       updateTaskStatus(file.name, "success");
-    } catch (err) {
-      console.error(`Error processing ${file.name}:`, err);
-      updateTaskStatus(file.name, "failed", "PROCESS_ERROR");
+    } catch (err: unknown) {
+      const finalMsg = err instanceof Error ? err.message : "API_OVERLOAD";
+      console.error(`Error processing ${file.name}:`, finalMsg);
+      updateTaskStatus(file.name, "failed", "RETRY_LIMIT_REACHED");
     }
   };
 
   /**
-   * BATCH HANDLER: processFiles (Sequential processing)
+   * BATCH HANDLER: processFiles
+   * Uses a Worker Pool with staggered starts to maximize throughput safely.
    */
-  /**
- * BATCH HANDLER: processFiles (High-Efficiency Worker Pool)
- * Processes files in small parallel chunks to maximize speed without API crashes.
- */
-const processFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
-  const files = Array.from(e.target.files || []);
-  if (files.length === 0) return;
+  const processFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
 
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
 
-  const newTasks: UploadTask[] = files.map((f) => ({
-    name: f.name,
-    status: "pending",
-  }));
+    setTasks((prev) => [
+  ...prev, 
+  ...files.map((f): UploadTask => ({ 
+    name: f.name, 
+    status: "pending"
+  }))
+]);
+    setIsProcessing(true);
 
-  setTasks((prev) => [...prev, ...newTasks]);
-  setIsProcessing(true);
+    const CONCURRENCY_LIMIT = 2; 
+    const queue = [...files];
 
-  // CONFIG: CONCURRENCY_LIMIT
-  // 3 is the "Sweet Spot" for the Gemini Free/Flash tier. 
-  const CONCURRENCY_LIMIT = 3; 
-  const queue = [...files];
-  
-  // Create "Workers" that pull from the same queue
-  const workers = Array(CONCURRENCY_LIMIT).fill(null).map(async () => {
-    while (queue.length > 0) {
-      const file = queue.shift(); // Pick up the next file
-      if (!file) break;
-
-      await processSingleFile(file, session.user.id);
+    // Create parallel workers
+    const workers = Array(CONCURRENCY_LIMIT).fill(null).map(async (_, workerIndex) => {
+      // Stagger workers to prevent simultaneous initial hits
+      await delay(workerIndex * 2500);
       
-      // Small "Cool down" per worker to stagger the next request slightly
-      await delay(500); 
-    }
-  });
-
-  // Wait for all workers to finish their assigned files
-  await Promise.all(workers);
-
-  setIsProcessing(false);
-};
-
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
+      while (queue.length > 0) {
+        const file = queue.shift();
+        if (!file) break;
+        await processSingleFile(file, session.user.id);
+        await delay(1000); // Small gap between files in the same worker
+      }
     });
+
+    await Promise.all(workers);
+    setIsProcessing(false);
   };
 
   return (
@@ -206,7 +171,7 @@ const processFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
           Batch_Ingest_Module
         </h2>
         <div className="flex items-center justify-center md:justify-start gap-3 mt-2">
-          <div className="w-2 h-2 bg-yellow-500 rounded-full shadow-[0_0_8px_rgba(234,179,8,0.5)]"></div>
+          <div className={`w-2 h-2 rounded-full shadow-[0_0_8px] ${isProcessing ? 'bg-blue-500 shadow-blue-500/50' : 'bg-yellow-500 shadow-yellow-500/50'}`}></div>
           <p className="text-zinc-500 font-mono text-xs tracking-[0.3em] uppercase">
             System_Status: {isProcessing ? "Processing..." : "Ready"} {"//"}{" "}
             Node_Active
@@ -237,7 +202,7 @@ const processFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
           </h3>
 
           <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest group-hover:text-zinc-400">
-            Supported_Formats: PDF, PNG, JPG // Click_To_Browse
+            Supported_Formats: PNG, JPG // Click_To_Browse
           </p>
 
           <input
