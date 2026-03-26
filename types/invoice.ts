@@ -13,15 +13,15 @@ export interface InvoiceExtraction {
   payment_methods?: string;
   currency?: string;
   subtotal?: number;
-  tax?: number;
+  tax_amount?: number;
   shipping?: number;
   discount?: number;
-  total: number;
+  total_amount: number;
   service_address?: string;
   items: Array<{
     description: string;
     qty: number;
     price: number;
-    total: number;
+    total_amount: number;
   }>;
 }

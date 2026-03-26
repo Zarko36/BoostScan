@@ -63,9 +63,8 @@ export default function ScanPage() {
 
       let parsedData: InvoiceExtraction | undefined;
       let retryAttempt = 0;
-      const maxRetries = 3;
+      const maxRetries = 4; // Increased for paid tier reliability
 
-      // 1. AI EXTRACTION LOOP
       while (retryAttempt <= maxRetries) {
         try {
           const rawResponse = await scanInvoice(base64String, file.type);
@@ -73,14 +72,16 @@ export default function ScanPage() {
           const cleanJson = jsonMatch ? jsonMatch[0] : rawResponse;
           parsedData = JSON.parse(cleanJson) as InvoiceExtraction;
 
-          if (parsedData?.vendor && parsedData.vendor !== "NOT_RECORDED") break;
+          if (parsedData?.vendor) break;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
-          const is503 = errorMessage.includes("503");
+          // Catch both 503 (Overload) and 429 (Rate Limit)
+          const isRetryable = errorMessage.includes("503") || errorMessage.includes("429") || errorMessage.includes("fetch");
 
-          if (is503 && retryAttempt < maxRetries) {
+          if (isRetryable && retryAttempt < maxRetries) {
+            // Exponential backoff: 2s, 4s, 8s...
             const waitTime = Math.pow(2, retryAttempt + 1) * 1000;
-            console.warn(`Gemini Busy. Retrying ${file.name} in ${waitTime}ms...`);
+            console.warn(`System busy. Retrying ${file.name} in ${waitTime}ms...`);
             await delay(waitTime);
             retryAttempt++;
             continue;
@@ -92,14 +93,14 @@ export default function ScanPage() {
 
       if (!parsedData) throw new Error("EXTRACTION_FAILED");
 
-      // 2. SUPABASE STORAGE UPLOAD
+      // STORAGE UPLOAD
       const { error: storageError } = await supabase.storage
         .from("invoices")
         .upload(filePath, file);
 
       if (storageError) throw storageError;
 
-      // 3. DATABASE INSERT
+      // DATABASE INSERT - Fixed property names to match your schema
       const { error: dbError } = await supabase.from("invoices").insert([
         {
           user_id: userId,
@@ -107,8 +108,9 @@ export default function ScanPage() {
           vendor: parsedData.vendor,
           invoice_number: parsedData.invoice_number || parsedData.order_number,
           date: parsedData.date,
-          total_amount: parsedData.total,
-          tax_amount: parsedData.tax,
+          // Fallback to whichever key the AI actually returned
+          total_amount: parsedData.total_amount ?? (parsedData as any).total,
+          tax_amount: parsedData.tax_amount ?? (parsedData as any).tax,
           category: parsedData.category,
           raw_json: parsedData,
         },
@@ -118,16 +120,12 @@ export default function ScanPage() {
 
       updateTaskStatus(file.name, "success");
     } catch (err: unknown) {
-      const finalMsg = err instanceof Error ? err.message : "API_OVERLOAD";
-      console.error(`Error processing ${file.name}:`, finalMsg);
-      updateTaskStatus(file.name, "failed", "RETRY_LIMIT_REACHED");
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error(`Final failure for ${file.name}:`, errorMessage);
+      updateTaskStatus(file.name, "failed", errorMessage.includes("503") ? "SERVER_BUSY" : "API_ERROR");
     }
   };
 
-  /**
-   * BATCH HANDLER: processFiles
-   * Uses a Worker Pool with staggered starts to maximize throughput safely.
-   */
   const processFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -136,27 +134,25 @@ export default function ScanPage() {
     if (!session) return;
 
     setTasks((prev) => [
-  ...prev, 
-  ...files.map((f): UploadTask => ({ 
-    name: f.name, 
-    status: "pending"
-  }))
-]);
+      ...prev, 
+      ...files.map((f): UploadTask => ({ name: f.name, status: "pending" }))
+    ]);
     setIsProcessing(true);
 
-    const CONCURRENCY_LIMIT = 2; 
+    // Paid Tier: We can push to 4 or 5 workers safely
+    const CONCURRENCY_LIMIT = 4; 
     const queue = [...files];
 
-    // Create parallel workers
     const workers = Array(CONCURRENCY_LIMIT).fill(null).map(async (_, workerIndex) => {
-      // Stagger workers to prevent simultaneous initial hits
-      await delay(workerIndex * 2500);
+      // Stagger the initial start of each worker
+      await delay(workerIndex * 800);
       
       while (queue.length > 0) {
         const file = queue.shift();
         if (!file) break;
         await processSingleFile(file, session.user.id);
-        await delay(1000); // Small gap between files in the same worker
+        // Small rest period to let the connection close gracefully
+        await delay(300); 
       }
     });
 
