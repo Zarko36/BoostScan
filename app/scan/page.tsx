@@ -63,23 +63,37 @@ export default function ScanPage() {
 
       let parsedData: InvoiceExtraction | undefined;
       let retryAttempt = 0;
-      const maxRetries = 4; // Increased for paid tier reliability
+      const maxRetries = 4;
 
+      // 1. AI EXTRACTION LOOP
       while (retryAttempt <= maxRetries) {
         try {
           const rawResponse = await scanInvoice(base64String, file.type);
           const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
           const cleanJson = jsonMatch ? jsonMatch[0] : rawResponse;
-          parsedData = JSON.parse(cleanJson) as InvoiceExtraction;
+          
+          // Parse raw data first to normalize keys
+          const rawData = JSON.parse(cleanJson);
 
-          if (parsedData?.vendor) break;
+          // Map to InvoiceExtraction interface safely
+          parsedData = {
+            ...rawData,
+            total_amount: rawData.total_amount ?? rawData.total ?? 0,
+            tax_amount: rawData.tax_amount ?? rawData.tax,
+            vendor: rawData.vendor || "UNKNOWN_VENDOR",
+            category: rawData.category || "Uncategorized",
+            items: rawData.items ?? [],
+          } as InvoiceExtraction;
+
+          if (parsedData.vendor && parsedData.vendor !== "NOT_RECORDED") break;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
-          // Catch both 503 (Overload) and 429 (Rate Limit)
-          const isRetryable = errorMessage.includes("503") || errorMessage.includes("429") || errorMessage.includes("fetch");
+          const isRetryable = 
+            errorMessage.includes("503") || 
+            errorMessage.includes("429") || 
+            errorMessage.includes("fetch");
 
           if (isRetryable && retryAttempt < maxRetries) {
-            // Exponential backoff: 2s, 4s, 8s...
             const waitTime = Math.pow(2, retryAttempt + 1) * 1000;
             console.warn(`System busy. Retrying ${file.name} in ${waitTime}ms...`);
             await delay(waitTime);
@@ -93,14 +107,14 @@ export default function ScanPage() {
 
       if (!parsedData) throw new Error("EXTRACTION_FAILED");
 
-      // STORAGE UPLOAD
+      // 2. STORAGE UPLOAD
       const { error: storageError } = await supabase.storage
         .from("invoices")
         .upload(filePath, file);
 
       if (storageError) throw storageError;
 
-      // DATABASE INSERT - Fixed property names to match your schema
+      // 3. DATABASE INSERT
       const { error: dbError } = await supabase.from("invoices").insert([
         {
           user_id: userId,
@@ -108,9 +122,8 @@ export default function ScanPage() {
           vendor: parsedData.vendor,
           invoice_number: parsedData.invoice_number || parsedData.order_number,
           date: parsedData.date,
-          // Fallback to whichever key the AI actually returned
-          total_amount: parsedData.total_amount ?? (parsedData as any).total,
-          tax_amount: parsedData.tax_amount ?? (parsedData as any).tax,
+          total_amount: parsedData.total_amount,
+          tax_amount: parsedData.tax_amount,
           category: parsedData.category,
           raw_json: parsedData,
         },
@@ -122,7 +135,12 @@ export default function ScanPage() {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`Final failure for ${file.name}:`, errorMessage);
-      updateTaskStatus(file.name, "failed", errorMessage.includes("503") ? "SERVER_BUSY" : "API_ERROR");
+      
+      const userFriendlyError = errorMessage.includes("503") || errorMessage.includes("429") 
+        ? "SERVER_BUSY" 
+        : "API_ERROR";
+        
+      updateTaskStatus(file.name, "failed", userFriendlyError);
     }
   };
 
