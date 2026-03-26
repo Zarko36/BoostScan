@@ -1,38 +1,22 @@
 "use client";
 /**
  * InsightStream: Persistent_Storage_Vault
- * Updated with Mathematical Integrity Checks
+ * Optimized with Dynamic Math Integrity Validation & Visual Discrepancy Alerts
  */
 import { scanInvoice } from "@/lib/gemini";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import {
-  FileText,
-  CheckCircle,
-  X,
-  ExternalLink,
-  ReceiptText,
-  Trash2,
-  Database,
-  MapPin,
-  Hash,
-  Calendar,
-  Tag,
-  CreditCard,
-  ChevronRight,
-  Loader2,
-  Mail,
-  Phone,
-  Info,
-  Clock,
-  AlertTriangle, // Added for the accuracy badge
+  FileText, CheckCircle, X, ExternalLink, ReceiptText, Trash2,
+  Database, MapPin, Hash, Calendar, Tag, CreditCard,
+  ChevronRight, Loader2, Mail, Phone, Info, Clock, AlertTriangle,
 } from "lucide-react";
 
 // --- TYPES & INTERFACES ---
 interface RecordItem {
   description: string;
   qty: number | string;
-  price: number;
+  price: number | string;
 }
 
 interface Invoice {
@@ -49,11 +33,11 @@ interface Invoice {
   seller_phone?: string;
   payment_terms?: string;
   payment_methods?: string;
-  total_amount: number;
-  subtotal_amount?: number;
-  tax_amount?: number;
-  shipping_amount?: number;
-  discount_amount?: number;
+  total_amount: number | string;
+  subtotal_amount?: number | string;
+  tax_amount?: number | string;
+  shipping_amount?: number | string;
+  discount_amount?: number | string;
   file_path?: string;
   items?: RecordItem[];
 }
@@ -77,34 +61,35 @@ export default function VaultPage() {
     setTimeout(() => setToast((prev) => ({ ...prev, show: false })), 4000);
   };
 
-  // --- INTEGRITY CHECK HELPER ---
-  const isDataAccurate = (invoice: Invoice) => {
-    if (!invoice.items || invoice.items.length === 0) return true;
+  /**
+   * CORE LOGIC: MATHEMATICAL INTEGRITY CHECK
+   */
+  const checkIntegrity = useCallback((invoice: Invoice) => {
+    const toNum = (val: any) => {
+      if (typeof val === 'string') return parseFloat(val.replace(/[^0-9.-]+/g, "")) || 0;
+      return parseFloat(val) || 0;
+    };
 
-    // 1. Calculate the sum of all line items
-    const calculatedLineItemsSum = invoice.items.reduce((sum, item) => {
-      const price = typeof item.price === 'string' ? parseFloat(item.price) : item.price;
-      const qty = typeof item.qty === 'string' ? parseFloat(item.qty) : (Number(item.qty) || 1);
-      return sum + (price * qty);
+    const items = invoice.items || [];
+    const calculatedLineItemsSum = items.reduce((sum, item) => {
+      return sum + (toNum(item.price) * toNum(item.qty || 1));
     }, 0);
 
-    // 2. Normalize all financial values to Numbers to avoid string-catenation or NaN issues
-    const subtotal = Number(invoice.subtotal_amount || 0);
-    const tax = Number(invoice.tax_amount || 0);
-    const shipping = Number(invoice.shipping_amount || 0);
-    const discount = Number(invoice.discount_amount || 0);
-    const total = Number(invoice.total_amount || 0);
+    const subtotal = toNum(invoice.subtotal_amount);
+    const tax = toNum(invoice.tax_amount);
+    const shipping = toNum(invoice.shipping_amount);
+    const discount = toNum(invoice.discount_amount);
+    const total = toNum(invoice.total_amount);
 
-    // 3. Perform Two-Point Validation
-    // Point A: Do line items match the reported subtotal?
-    const lineItemsMatchSubtotal = Math.abs(calculatedLineItemsSum - subtotal) < 0.01;
-    
-    // Point B: Does (Subtotal + Tax + Shipping - Discount) match the Final Total?
-    const mathAddsUpToTotal = Math.abs((subtotal + tax + shipping - discount) - total) < 0.01;
+    const lineItemsMatchSubtotal = items.length === 0 || Math.abs(calculatedLineItemsSum - subtotal) < 0.001;
+    const mathAddsUpToTotal = Math.abs((subtotal + tax + shipping - discount) - total) < 0.001;
 
-    // Return true ONLY if both checks pass
-    return lineItemsMatchSubtotal && mathAddsUpToTotal;
-  };
+    return {
+      isPerfect: lineItemsMatchSubtotal && mathAddsUpToTotal,
+      sumMismatch: !lineItemsMatchSubtotal,
+      totalMismatch: !mathAddsUpToTotal
+    };
+  }, []);
 
   const fetchHistory = useCallback(async () => {
     const { data, error } = await supabase
@@ -162,34 +147,15 @@ export default function VaultPage() {
       const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
       const parsedData = JSON.parse(jsonMatch ? jsonMatch[0] : rawResponse);
 
-      const updatePayload = {
-        vendor_name: parsedData.vendor_name,
-        category: parsedData.category,
-        total_amount: parsedData.total_amount,
-        invoice_date: parsedData.invoice_date,
-        due_date: parsedData.due_date,
-        order_number: parsedData.order_number,
-        invoice_number: parsedData.invoice_number,
-        seller_address: parsedData.seller_address,
-        seller_email: parsedData.seller_email,
-        seller_phone: parsedData.seller_phone,
-        payment_terms: parsedData.payment_terms,
-        subtotal_amount: parsedData.subtotal_amount,
-        tax_amount: parsedData.tax_amount,
-        shipping_amount: parsedData.shipping_amount,
-        discount_amount: parsedData.discount_amount,
-        items: parsedData.items
-      };
-
       const { error: updateError } = await supabase
         .from("invoices")
-        .update(updatePayload)
+        .update(parsedData)
         .eq("id", invoice.id);
 
       if (updateError) throw updateError;
 
       await fetchHistory();
-      setSelectedInvoice({ ...invoice, ...updatePayload });
+      setSelectedInvoice({ ...invoice, ...parsedData });
       showNotification("RE_SCAN_COMPLETE: Data_Synchronized", "success");
     } catch (err) {
       console.error("Rescan_Failed:", err);
@@ -211,7 +177,7 @@ export default function VaultPage() {
   });
 
   return (
-    <div className="max-w-[1600px] mx-auto py-10 px-6 outline-none animate-in fade-in slide-in-from-bottom-4 duration-700">
+    <div className="max-w-[1600px] mx-auto py-10 px-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
       <header className="mb-12">
         <h2 className="text-4xl font-black text-white italic uppercase tracking-tighter">
           Persistent_Storage_Vault
@@ -257,39 +223,67 @@ export default function VaultPage() {
             </div>
           ) : filteredHistory.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {filteredHistory.map((inv) => (
-                <div
-                  key={inv.id}
-                  onClick={() => handleOpenDetails(inv)}
-                  className="p-6 bg-zinc-900/50 border border-zinc-800 rounded-2xl hover:border-blue-500/50 hover:shadow-[0_0_20px_rgba(59,130,246,0.15)] transition-all cursor-pointer group shadow-xl backdrop-blur-sm"
-                >
-                  <div className="flex justify-between items-start mb-6">
-                    <div>
-                      {/* --- ACCURACY BADGE ADDED HERE --- */}
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-white font-bold group-hover:text-blue-400 truncate max-w-[180px]">{inv.vendor_name}</h4>
-                        {!isDataAccurate(inv) && (
-                          <div title="AI_MATH_MISMATCH" className="animate-pulse">
-                            <AlertTriangle className="w-3 h-3 text-amber-500" />
-                          </div>
-                        )}
+              {filteredHistory.map((inv) => {
+                const integrity = checkIntegrity(inv);
+                
+                // Discrepancy Calculation for UI transparency
+                const toNum = (val: any) => typeof val === 'string' ? parseFloat(val.replace(/[^0-9.-]+/g, "")) || 0 : parseFloat(val as string) || 0;
+                const expectedTotal = toNum(inv.subtotal_amount) + toNum(inv.tax_amount) + toNum(inv.shipping_amount) - toNum(inv.discount_amount);
+                const difference = expectedTotal - toNum(inv.total_amount);
+
+                return (
+                  <div
+                    key={inv.id}
+                    onClick={() => handleOpenDetails(inv)}
+                    className={`p-6 bg-zinc-900/50 border rounded-2xl transition-all cursor-pointer group shadow-xl backdrop-blur-sm ${
+                      !integrity.isPerfect 
+                      ? "border-amber-500/20 hover:border-amber-500/50 hover:shadow-[0_0_20px_rgba(245,158,11,0.1)]" 
+                      : "border-zinc-800 hover:border-blue-500/50 hover:shadow-[0_0_20px_rgba(59,130,246,0.15)]"
+                    }`}
+                  >
+                    <div className="flex justify-between items-start mb-6">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className={`font-bold truncate max-w-[180px] ${!integrity.isPerfect ? "text-amber-400" : "text-white group-hover:text-blue-400"}`}>{inv.vendor_name}</h4>
+                          {!integrity.isPerfect && (
+                            <div title="MATH_RECONCILIATION_NEEDED" className="animate-pulse">
+                              <AlertTriangle className="w-3 h-3 text-amber-500" />
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-[9px] text-zinc-500 font-mono uppercase tracking-widest mt-1">
+                          {inv.category} {"//"} {inv.invoice_date}
+                        </p>
                       </div>
-                      <p className="text-[9px] text-zinc-500 font-mono uppercase tracking-widest mt-1">
-                        {inv.category} {"//"} {inv.invoice_date}
-                      </p>
+                      <FileText className={`w-5 h-5 ${!integrity.isPerfect ? "text-amber-900/50" : "text-zinc-700 group-hover:text-blue-500"}`} />
                     </div>
-                    <FileText className="w-5 h-5 text-zinc-700 group-hover:text-blue-500" />
+                    
+                    <div className="flex justify-between items-end border-t border-zinc-800/50 pt-4">
+                      <div className="flex flex-col">
+                        {!integrity.isPerfect && (
+                          <span className="text-[8px] font-mono text-amber-500/60 uppercase tracking-tighter mb-1">
+                            Math_Expected: ${expectedTotal.toFixed(2)}
+                          </span>
+                        )}
+                        <p className={`font-mono font-black text-xl ${!integrity.isPerfect ? 'text-amber-500' : 'text-blue-400'}`}>
+                          ${parseFloat(inv.total_amount as string).toFixed(2)}
+                        </p>
+                      </div>
+                      
+                      {integrity.isPerfect ? (
+                         <CheckCircle className="w-4 h-4 text-green-500/20 group-hover:text-green-500/50" />
+                      ) : (
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="text-[7px] bg-amber-500/10 text-amber-500 px-1 rounded border border-amber-500/20 font-black italic">
+                            DIFF: ${difference > 0 ? "+" : ""}{difference.toFixed(2)}
+                          </span>
+                          <Info className="w-4 h-4 text-amber-500/40 group-hover:text-amber-500" />
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex justify-between items-end border-t border-zinc-800/50 pt-4">
-                    <p className="text-blue-400 font-mono font-black text-xl">${Number(inv.total_amount).toFixed(2)}</p>
-                    {isDataAccurate(inv) ? (
-                       <CheckCircle className="w-4 h-4 text-green-500/20 group-hover:text-green-500/50" />
-                    ) : (
-                       <Info className="w-4 h-4 text-amber-500/40 group-hover:text-amber-500" />
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-32 border border-dashed border-zinc-800 rounded-3xl bg-zinc-900/10">
@@ -307,14 +301,16 @@ export default function VaultPage() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-zinc-950 border border-zinc-800 w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden max-h-[95vh] flex flex-col relative cursor-default"
+            className={`bg-zinc-950 border w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden max-h-[95vh] flex flex-col relative cursor-default transition-colors duration-500 ${
+               !checkIntegrity(selectedInvoice).isPerfect ? "border-amber-500/30" : "border-zinc-800"
+            }`}
           >
-            {/* Header */}
+            {/* Modal Header */}
             <div className="p-8 border-b border-zinc-800 flex justify-between items-start bg-zinc-900/50">
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
                   <h2 className="text-3xl font-black text-white italic uppercase tracking-tighter leading-none">{selectedInvoice.vendor_name}</h2>
-                  {!isDataAccurate(selectedInvoice) && (
+                  {!checkIntegrity(selectedInvoice).isPerfect && (
                     <span className="bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[8px] font-black px-2 py-0.5 rounded-full animate-pulse tracking-tighter uppercase">Integrity_Alert</span>
                   )}
                 </div>
@@ -332,9 +328,8 @@ export default function VaultPage() {
               </button>
             </div>
 
-            {/* Body */}
+            {/* Modal Body */}
             <div className="p-8 overflow-y-auto custom-scrollbar flex-1 space-y-8">
-              {/* Top Details Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-[9px] text-zinc-500 uppercase font-black tracking-widest">
@@ -354,42 +349,19 @@ export default function VaultPage() {
                   </div>
                   <div className="flex items-center gap-2 pl-5">
                     <p className="font-mono text-zinc-200 text-sm">#{selectedInvoice.invoice_number || "NONE"}</p>
-                    <button onClick={() => handleManualRescan(selectedInvoice)} disabled={isRescanning} className="p-1 hover:text-blue-400 text-zinc-600 transition-colors">
+                    <button 
+                      onClick={() => handleManualRescan(selectedInvoice)} 
+                      disabled={isRescanning} 
+                      className={`p-1 hover:text-blue-400 transition-colors ${!checkIntegrity(selectedInvoice).isPerfect ? 'text-amber-500' : 'text-zinc-600'}`}
+                      title="Request AI Re-Scan"
+                    >
                       <Loader2 className={`w-3 h-3 ${isRescanning ? "animate-spin" : ""}`} />
                     </button>
                   </div>
                 </div>
               </div>
 
-              {/* Vendor & Location Section */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-5 bg-zinc-900/30 border border-zinc-800 rounded-2xl space-y-3">
-                  <div className="text-[9px] text-blue-500 uppercase font-black tracking-widest border-b border-zinc-800/50 pb-2 flex justify-between items-center">
-                    <span>Seller_Intel</span>
-                    <Info className="w-3 h-3 opacity-50" />
-                  </div>
-                  <div className="space-y-2 text-xs font-mono uppercase">
-                    {selectedInvoice.seller_address && <p className="text-zinc-400 flex items-start gap-2"><MapPin className="w-3 h-3 mt-0.5" /> {selectedInvoice.seller_address}</p>}
-                    {selectedInvoice.seller_email && <p className="text-zinc-400 flex items-center gap-2"><Mail className="w-3 h-3" /> {selectedInvoice.seller_email}</p>}
-                    {selectedInvoice.seller_phone && <p className="text-zinc-400 flex items-center gap-2"><Phone className="w-3 h-3" /> {selectedInvoice.seller_phone}</p>}
-                  </div>
-                </div>
-
-                <div className="p-5 bg-zinc-900/30 border border-zinc-800 rounded-2xl space-y-3">
-                  <div className="text-[9px] text-blue-500 uppercase font-black tracking-widest border-b border-zinc-800/50 pb-2 flex justify-between items-center">
-                    <span>Logistics_&_Terms</span>
-                    <Clock className="w-3 h-3 opacity-50" />
-                  </div>
-                  <div className="space-y-2 text-xs font-mono uppercase">
-                    <p className="text-zinc-400 flex items-start gap-2"><MapPin className="w-3 h-3 mt-0.5" /> {selectedInvoice.service_address || "NOT_SPECIFIED"}</p>
-                    <p className="text-zinc-400 flex items-center gap-2"><CreditCard className="w-3 h-3" /> {selectedInvoice.payment_terms || "N/A"}</p>
-                    {selectedInvoice.order_number && <p className="text-blue-400/80 flex items-center gap-2"><Hash className="w-3 h-3" /> ORD: {selectedInvoice.order_number}</p>}
-                  </div>
-                </div>
-              </div>
-
-              {/* Line Items Table */}
-              <div className="bg-black border border-zinc-800 rounded-2xl overflow-hidden">
+              <div className={`bg-black border rounded-2xl overflow-hidden transition-colors ${!checkIntegrity(selectedInvoice).isPerfect ? 'border-amber-500/20' : 'border-zinc-800'}`}>
                 <div className="p-4 border-b border-zinc-800 bg-zinc-900/50 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <ReceiptText className="w-4 h-4 text-blue-500" />
@@ -410,8 +382,8 @@ export default function VaultPage() {
                         <tr key={i} className="text-zinc-300 hover:bg-white/5 transition-colors">
                           <td className="p-4 leading-tight">{item.description}</td>
                           <td className="p-4 text-center text-zinc-500">{item.qty}</td>
-                          <td className={`p-4 text-right font-bold ${item.price < 0 ? "text-green-400" : "text-blue-400"}`}>
-                            ${Math.abs(Number(item.price)).toFixed(2)}
+                          <td className={`p-4 text-right font-bold ${parseFloat(item.price as string) < 0 ? "text-green-400" : "text-blue-400"}`}>
+                            ${Math.abs(parseFloat(item.price as string)).toFixed(2)}
                           </td>
                         </tr>
                       ))}
@@ -419,36 +391,57 @@ export default function VaultPage() {
                   </table>
                 </div>
 
-                {/* --- MODAL FOOTER ACCURACY UPDATES --- */}
                 <div className="p-6 bg-zinc-900/40 space-y-2 border-t border-zinc-800">
-                  <div className={`flex justify-between text-[10px] uppercase font-mono ${!isDataAccurate(selectedInvoice) ? 'text-amber-500 font-bold' : 'text-zinc-500'}`}>
-                    <span>Subtotal {!isDataAccurate(selectedInvoice) && "(MATCH_ERR)"}</span>
-                    <span>${Number(selectedInvoice.subtotal_amount || 0).toFixed(2)}</span>
-                  </div>
                   <div className="flex justify-between text-[10px] uppercase font-mono text-zinc-500">
-                    <span>Tax</span>
-                    <span>${Number(selectedInvoice.tax_amount || 0).toFixed(2)}</span>
+                    <span>Subtotal (+)</span>
+                    <span>${parseFloat(selectedInvoice.subtotal_amount as string || "0").toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between text-[10px] uppercase font-mono text-zinc-500">
-                    <span>Shipping</span>
-                    <span>${Number(selectedInvoice.shipping_amount || 0).toFixed(2)}</span>
-                  </div>
-                  {Number(selectedInvoice.discount_amount) > 0 && (
-                    <div className="flex justify-between text-[10px] uppercase font-mono text-emerald-500">
-                      <span>Discount</span>
-                      <span>-${Number(selectedInvoice.discount_amount).toFixed(2)}</span>
+                  
+                  {parseFloat(selectedInvoice.tax_amount as string || "0") > 0 && (
+                    <div className="flex justify-between text-[10px] uppercase font-mono text-zinc-500">
+                      <span>Tax (+)</span>
+                      <span>${parseFloat(selectedInvoice.tax_amount as string || "0").toFixed(2)}</span>
                     </div>
                   )}
-                  <div className="flex justify-between pt-4 border-t border-zinc-800 mt-2">
-                    <span className="text-white font-black italic uppercase text-xs tracking-tighter">Final_Settlement</span>
-                    <span className="text-blue-500 font-black text-xl drop-shadow-[0_0_8px_rgba(59,130,246,0.3)]">
-                      ${Number(selectedInvoice.total_amount).toFixed(2)}
+
+                  {parseFloat(selectedInvoice.shipping_amount as string || "0") > 0 && (
+                    <div className="flex justify-between text-[10px] uppercase font-mono text-zinc-500">
+                      <span>Shipping (+)</span>
+                      <span>${parseFloat(selectedInvoice.shipping_amount as string || "0").toFixed(2)}</span>
+                    </div>
+                  )}
+
+                  {parseFloat(selectedInvoice.discount_amount as string || "0") > 0 && (
+                    <div className="flex justify-between text-[10px] uppercase font-mono text-emerald-500 font-bold italic">
+                      <span>Discount (-)</span>
+                      <span>-${parseFloat(selectedInvoice.discount_amount as string).toFixed(2)}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between pt-4 border-t border-zinc-800 mt-2 items-end">
+                    <span className={`font-black italic uppercase text-xs tracking-tighter ${!checkIntegrity(selectedInvoice).isPerfect ? 'text-amber-500 animate-pulse' : 'text-white'}`}>
+                      Final_Settlement
                     </span>
+                    <div className="text-right">
+                       <span className={`font-black text-2xl transition-all duration-500 ${!checkIntegrity(selectedInvoice).isPerfect 
+                        ? 'text-amber-500 drop-shadow-[0_0_10px_rgba(245,158,11,0.5)]' 
+                        : 'text-blue-500'}`}>
+                        ${parseFloat(selectedInvoice.total_amount as string).toFixed(2)}
+                      </span>
+                    </div>
                   </div>
+
+                  {!checkIntegrity(selectedInvoice).isPerfect && (
+                    <div className="mt-4 p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl flex items-start gap-3">
+                      <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                      <p className="text-[10px] leading-relaxed text-amber-200/70 font-mono uppercase">
+                        <span className="text-amber-500 font-bold">Calculation_Alert:</span> The sum of components (Subtotal + Tax + Shipping - Discount) does not reconcile with the Total. Manual verification required.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Actions */}
               <div className="flex flex-col gap-3 pt-2">
                 {downloadUrl && (
                   <a href={downloadUrl} target="_blank" rel="noopener noreferrer" className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center gap-3 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-xl active:scale-[0.98]">
@@ -464,7 +457,6 @@ export default function VaultPage() {
         </div>
       )}
 
-      {/* Toast */}
       {toast.show && (
         <div className="fixed bottom-10 right-10 z-[200] animate-in slide-in-from-right-10">
           <div className={`flex items-center gap-4 px-6 py-4 rounded-2xl border backdrop-blur-xl shadow-2xl ${toast.type === "success" ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400" : "bg-red-500/10 border-red-500/50 text-red-400"}`}>
