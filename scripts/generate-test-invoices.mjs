@@ -70,6 +70,7 @@ const invoiceData = {
 // --- THE TEMPLATE ENGINE ---
 function generateHTML(category, data, index) {
   const invNum = `INV-${category.substring(0,3).toUpperCase()}-${1000 + index}`;
+  const orderNum = `ORD-99${index}-${category.substring(0,2).toUpperCase()}`;
   const subtotal = data.items.reduce((sum, item) => sum + (item.qty * item.rate), 0);
   const tax = subtotal * (data.taxRate || 0);
   const total = subtotal + tax + (data.shipping || 0) - (data.discount || 0);
@@ -94,10 +95,14 @@ function generateHTML(category, data, index) {
           <p class="font-bold text-slate-900 text-lg">Joel Muniz</p>
           <p class="text-sm text-slate-500">Corona, California 92882</p>
         </div>
-        <div class="grid grid-cols-2 gap-4 text-right">
+        <div class="grid grid-cols-3 gap-2 text-right"> 
           <div>
             <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Date Issued</p>
             <p class="text-sm font-semibold">March 25, 2026</p>
+          </div>
+          <div>
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Order #</p>
+            <p class="text-sm font-semibold">${orderNum}</p>
           </div>
           <div>
             <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Due Date</p>
