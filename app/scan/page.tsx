@@ -127,6 +127,13 @@ export default function ScanPage() {
         throw storageError;
       }
 
+      // Helper to check if a string is a valid ISO date
+      const isValidDate = (dateString: string | null | undefined) => {
+        if (!dateString) return false;
+        const date = new Date(dateString);
+        return !isNaN(date.getTime());
+      };
+
       // 3. DATABASE INSERT
       // Mapping the interface to your EXACT Supabase column names
       // 3. DATABASE INSERT
@@ -142,8 +149,8 @@ export default function ScanPage() {
         order_number: parsedData.order_number,
         
         // Dates (We fixed the key name from 'date' to 'invoice_date')
-        invoice_date: parsedData.invoice_date, 
-        due_date: parsedData.due_date,
+        invoice_date: isValidDate(parsedData.invoice_date) ? parsedData.invoice_date : null,
+        due_date: isValidDate(parsedData.due_date) ? parsedData.due_date : null,
         
         // Financials
         subtotal_amount: parsedData.subtotal_amount,
@@ -160,7 +167,7 @@ export default function ScanPage() {
         service_address: parsedData.service_address,
         
         // Payment Info
-        payment_terms: parsedData.payment_terms,
+        payment_terms: parsedData.payment_terms || parsedData.due_date,
         payment_methods: parsedData.payment_methods,
         
         // Complex Data
@@ -199,7 +206,7 @@ export default function ScanPage() {
     setIsProcessing(true);
 
     // Paid Tier: We can push to 4 or 5 workers safely
-    const CONCURRENCY_LIMIT = 2; 
+    const CONCURRENCY_LIMIT = 5; 
     const queue = [...files];
 
     const workers = Array(CONCURRENCY_LIMIT).fill(null).map(async (_, workerIndex) => {
