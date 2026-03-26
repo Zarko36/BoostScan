@@ -120,25 +120,26 @@ export default function ScanPage() {
       const insertData = {
         user_id: userId,
         file_path: filePath,
-        vendor: parsedData.vendor,
+        // Mapping code variable 'vendor' to DB column 'vendor_name'
+        vendor_name: parsedData.vendor, 
         invoice_number: parsedData.invoice_number || parsedData.order_number,
         total_amount: parsedData.total_amount,
         tax_amount: parsedData.tax_amount,
         category: parsedData.category,
-        // If Supabase still complains about these two, 
-        // verify their names in the Supabase Dashboard:
-        date: parsedData.date, 
-        raw_json: parsedData 
+        // Mapping code variable 'date' to DB column 'invoice_date'
+        invoice_date: parsedData.date, 
+        items: parsedData.items, // Already a JSONB array
+        raw_json: parsedData     // The full object
       };
 
-      const { error: dbError } = await supabase.from("invoices").insert([insertData]);
+const { error: dbError } = await supabase.from("invoices").insert([insertData]);
 
       if (dbError) {
         console.error("SUPABASE_INSERT_ERROR:", dbError);
         // Fallback: Try inserting without the problematic columns if they are missing
         if (dbError.message.includes("column")) {
            console.warn("Attempting emergency insert without date/raw_json...");
-           const { date, raw_json, ...fallbackData } = insertData;
+           const { invoice_date, raw_json, ...fallbackData } = insertData;
            const { error: retryDbError } = await supabase.from("invoices").insert([fallbackData]);
            if (retryDbError) throw retryDbError;
         } else {

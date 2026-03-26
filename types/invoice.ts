@@ -7,7 +7,7 @@ export interface InvoiceExtraction {
   category: string;
   invoice_number?: string;
   order_number?: string;
-  invoice_date?: string; 
+  date?: string; 
   due_date?: string; 
   payment_terms?: string;
   payment_methods?: string;
