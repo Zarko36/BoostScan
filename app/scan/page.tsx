@@ -110,40 +110,69 @@ export default function ScanPage() {
       // 2. STORAGE UPLOAD
       const { error: storageError } = await supabase.storage
         .from("invoices")
-        .upload(filePath, file);
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: true // Overwrites if a partial upload exists, preventing "File already exists" errors
+      });
 
-      if (storageError) throw storageError;
+      if (storageError && (storageError.message.includes("timeout") || storageError.message.includes("Fetch"))) {
+        console.warn(`Initial upload failed for ${file.name}, retrying once...`);
+        await delay(1500);
+        const { error: retryError } = await supabase.storage
+          .from("invoices")
+          .upload(filePath, file, { upsert: true });
+        
+        if (retryError) throw retryError;
+      } else if (storageError) {
+        throw storageError;
+      }
 
       // 3. DATABASE INSERT
       // Mapping the interface to your EXACT Supabase column names
+      // 3. DATABASE INSERT
+      // This block maps the AI response (parsedData) to your EXACT Supabase column names
       const insertData = {
         user_id: userId,
         file_path: filePath,
-        // Mapping code variable 'vendor' to DB column 'vendor_name'
+        
+        // Basic Info
         vendor_name: parsedData.vendor, 
-        invoice_number: parsedData.invoice_number || parsedData.order_number,
-        total_amount: parsedData.total_amount,
-        tax_amount: parsedData.tax_amount,
         category: parsedData.category,
-        // Mapping code variable 'date' to DB column 'invoice_date'
-        invoice_date: parsedData.date, 
-        items: parsedData.items, // Already a JSONB array
-        raw_json: parsedData     // The full object
+        invoice_number: parsedData.invoice_number,
+        order_number: parsedData.order_number,
+        
+        // Dates (We fixed the key name from 'date' to 'invoice_date')
+        invoice_date: parsedData.invoice_date, 
+        due_date: parsedData.due_date,
+        
+        // Financials
+        subtotal_amount: parsedData.subtotal_amount,
+        tax_amount: parsedData.tax_amount,
+        shipping_amount: parsedData.shipping_amount,
+        discount_amount: parsedData.discount_amount,
+        total_amount: parsedData.total_amount,
+        currency: parsedData.currency || "USD",
+        
+        // Seller & Service Info
+        seller_address: parsedData.seller_address,
+        seller_email: parsedData.seller_email,
+        seller_phone: parsedData.seller_phone,
+        service_address: parsedData.service_address,
+        
+        // Payment Info
+        payment_terms: parsedData.payment_terms,
+        payment_methods: parsedData.payment_methods,
+        
+        // Complex Data
+        items: parsedData.items, 
+        raw_json: parsedData 
       };
 
-const { error: dbError } = await supabase.from("invoices").insert([insertData]);
+      const { error: dbError } = await supabase.from("invoices").insert([insertData]);
 
       if (dbError) {
         console.error("SUPABASE_INSERT_ERROR:", dbError);
-        // Fallback: Try inserting without the problematic columns if they are missing
-        if (dbError.message.includes("column")) {
-           console.warn("Attempting emergency insert without date/raw_json...");
-           const { invoice_date, raw_json, ...fallbackData } = insertData;
-           const { error: retryDbError } = await supabase.from("invoices").insert([fallbackData]);
-           if (retryDbError) throw retryDbError;
-        } else {
-          throw dbError;
-        }
+        throw dbError;
       }
 
       updateTaskStatus(file.name, "success");
