@@ -54,7 +54,6 @@ export default function ScanPage() {
    * CORE LOGIC: processSingleFile
    * Includes Exponential Backoff for 503 stability and Supabase integration.
    */
-
   const processSingleFile = async (file: File, userId: string) => {
     updateTaskStatus(file.name, "scanning");
 
@@ -155,6 +154,7 @@ const { error: dbError } = await supabase.from("invoices").insert([insertData]);
     }
   };
   
+  
 
   const processFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -170,19 +170,19 @@ const { error: dbError } = await supabase.from("invoices").insert([insertData]);
     setIsProcessing(true);
 
     // Paid Tier: We can push to 4 or 5 workers safely
-    const CONCURRENCY_LIMIT = 3; 
+    const CONCURRENCY_LIMIT = 2; 
     const queue = [...files];
 
     const workers = Array(CONCURRENCY_LIMIT).fill(null).map(async (_, workerIndex) => {
       // Stagger the initial start of each worker
-      await delay(workerIndex * 800);
+      await delay(workerIndex * 1500);
       
       while (queue.length > 0) {
         const file = queue.shift();
         if (!file) break;
         await processSingleFile(file, session.user.id);
         // Small rest period to let the connection close gracefully
-        await delay(300); 
+        await delay(1000); 
       }
     });
 
